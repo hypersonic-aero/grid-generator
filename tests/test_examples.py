@@ -37,7 +37,7 @@ def test_examples_exist() -> None:
 def test_every_example_copies_and_runs(
     geometry_type: str, name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Each example lands in ./<name>/ and runs there with run's default config name."""
+    """Each example lands in the current folder and runs there with run's default config."""
 
     # list: the example appears with its description
     monkeypatch.chdir(tmp_path)
@@ -46,10 +46,9 @@ def test_every_example_copies_and_runs(
     assert name in list_result.output
     assert list_examples(geometry_type)[name] in list_result.output
 
-    # copy, then run from inside the copy
+    # copy into the current folder, then run there
     copy_result = runner.invoke(app, [geometry_type, "examples", name])
     assert copy_result.exit_code == 0
-    monkeypatch.chdir(tmp_path / name)
     run_result = runner.invoke(app, [geometry_type, "run"])
 
     # check: the run succeeded and wrote the grid its config names
@@ -61,10 +60,10 @@ def test_every_example_copies_and_runs(
 # --------------------------------------------------
 # command behaviour
 # --------------------------------------------------
-def test_examples_refuse_an_existing_folder_unless_forced(
+def test_examples_refuse_to_overwrite_files_unless_forced(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A second copy fails without --force and overwrites with it."""
+    """A second copy fails without --force (the files exist) and overwrites with it."""
     monkeypatch.chdir(tmp_path)
     geometry_type, name = ALL_EXAMPLES[0]
     runner.invoke(app, [geometry_type, "examples", name])
@@ -73,7 +72,7 @@ def test_examples_refuse_an_existing_folder_unless_forced(
     forced = runner.invoke(app, [geometry_type, "examples", name, "--force"])
 
     assert refused.exit_code == 1
-    assert "already exists" in refused.output
+    assert "would overwrite" in refused.output
     assert forced.exit_code == 0
 
 
@@ -87,7 +86,7 @@ def test_examples_reject_an_unknown_name(tmp_path: Path, monkeypatch: pytest.Mon
     assert result.exit_code == 1
     assert "unknown example" in result.output
     assert name in result.output
-    assert not (tmp_path / "nope").exists()
+    assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.parametrize(

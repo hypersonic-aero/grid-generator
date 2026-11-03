@@ -1,0 +1,67 @@
+# 7 deg cone, 2.5 mm nose radius, Mach 6, shock-aligned outer boundary
+#
+# body: 7 deg half-angle sphere-cone, 2.5 mm nose, ending at x = 0.5 m
+# shock.csv: flow-theory shock-shape run, method billig_blended, for Mach 6
+#   (gamma = 1.4) on the same body
+# run: grid-generator cone run
+
+# Sphere-cone, axisymmetric about the x axis; the grid is the meridian plane.
+[geometry]
+# geometry type
+type = "cone"
+# nose radius [m]
+nose_radius = 2.5e-3
+# cone half-angle [deg]
+half_angle = 7.0
+
+# Extent of the grid along the body.
+[domain]
+# end of the grid (and of the body) along x, measured from the nose tip [m]
+x_end = 0.5
+
+# Shock-aligned outer boundary: the shock pushed out along its normal by
+# (margin_factor - 1) * (its distance from the wall) + min_offset.
+[outer]
+# shock curve: x, y columns (flow-theory shock-shape run with a .csv output)
+shock = "shock.csv"
+# factor on the shock's distance from the wall
+margin_factor = 1.2
+# distance added beyond the scaled shock distance [m]
+min_offset = 1.0e-3
+
+# along the wall, nose arc: equal angle steps
+[points.nose]
+# points on the nose arc
+n_points = 101
+
+# along the wall, cone: from the junction to x_end, starting at the nose spacing
+[points.body]
+# distribution type
+type = "geometric"
+# points on the cone
+n_points = 401
+
+# away from the wall: geometric growth from the first spacing to each line's height
+[points.normal]
+# distribution type
+type = "geometric"
+# points in the wall-normal direction
+n_points = 201
+# first wall-normal spacing [m]
+first_spacing = 1.0e-6
+
+# Boundary names in the grid file.
+[markers]
+# the body
+wall = "wall"
+# outer boundary (shock-aligned)
+outer = "farfield"
+# outflow plane at x_end
+outflow = "outflow"
+# stagnation line ahead of the nose
+symmetry = "symmetry"
+
+# The path is relative to this file; the extension picks the format (.su2, .h5, .msh, ...)
+[output]
+# grid file
+filename = "cone7_m6_rn2p5.h5"

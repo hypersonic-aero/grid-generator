@@ -1,4 +1,4 @@
-# 7 deg cone, 2.5 mm nose radius, ending at x = 1 m
+# 7 deg cone, 2.5 mm nose radius, Mach 7, constant-height outer boundary
 #
 # body: 7 deg half-angle sphere-cone, 2.5 mm nose, ending at x = 1 m (unit length)
 # resolution: fine enough for a laminar boundary layer at Mach 7, Re = 2.4e6 /m:

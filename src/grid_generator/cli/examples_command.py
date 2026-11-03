@@ -85,35 +85,44 @@ def copy_example(
     Args:
         geometry_type: Geometry type, e.g. "cone".
         name: Example name (see list_examples).
-        destination: Folder to create and copy the files into.
-        force: Overwrite files that already exist in the folder.
+        destination: Folder to copy the files into (created if missing).
+        force: Overwrite files of the same name in the folder.
 
     Returns:
         The paths of the written files.
 
     Raises:
         KeyError: If the type has no example of that name.
-        FileExistsError: If the folder exists and force is False.
+        FileExistsError: If a file of the example already exists there and force
+            is False (nothing is written then).
     """
 
     # check: a known example
     if name not in list_examples(geometry_type):
         raise KeyError(name)
 
-    # check: don't overwrite an earlier copy unless asked to
+    # the example's files
+    source = _type_root(geometry_type) / name
+    items = sorted(
+        (entry for entry in source.iterdir() if entry.is_file()),
+        key=lambda entry: entry.name,
+    )
+
+    # check: don't overwrite the user's files unless asked to (before writing any)
     destination = Path(destination)
-    if destination.exists() and not force:
-        raise FileExistsError(f"{destination} already exists (use --force to overwrite)")
+    existing = [item.name for item in items if (destination / item.name).exists()]
+    if existing and not force:
+        raise FileExistsError(
+            f"would overwrite {', '.join(existing)} (use --force to overwrite)"
+        )
 
     # copy every file of the example folder
     destination.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
-    source = _type_root(geometry_type) / name
-    for item in sorted(source.iterdir(), key=lambda entry: entry.name):
-        if item.is_file():
-            target = destination / item.name
-            target.write_bytes(item.read_bytes())
-            written.append(target)
+    for item in items:
+        target = destination / item.name
+        target.write_bytes(item.read_bytes())
+        written.append(target)
 
     return written
 
@@ -131,14 +140,14 @@ def build_examples_command(geometry_type: str) -> Callable[..., None]:
     def cmd_examples(
         name: Annotated[
             str | None,
-            typer.Argument(help="Example to copy into ./<name>/. Omit to list the examples."),
+            typer.Argument(help="Example to copy into the current folder. Omit to list the examples."),
         ] = None,
         force: Annotated[
             bool,
-            typer.Option("--force", "-f", help="Overwrite an existing ./<name>/ folder."),
+            typer.Option("--force", "-f", help="Overwrite files of the same name in this folder."),
         ] = False,
     ) -> None:
-        """List the bundled examples, or copy one into a new folder to run."""
+        """List the bundled examples, or copy one into the current folder to run."""
 
         # list: name and description of every example
         examples = list_examples(geometry_type)
@@ -153,16 +162,14 @@ def build_examples_command(geometry_type: str) -> Callable[..., None]:
             typer.echo("command sequence:")
             typer.echo("  - check out the example")
             typer.echo(f"     grid-generator {geometry_type} examples <name>")
-            typer.echo("  - change into its folder")
-            typer.echo("     cd <name>")
             typer.echo("  - run the example")
             typer.echo(f"     grid-generator {geometry_type} run")
             typer.echo("")
             return
 
-        # copy the example into ./<name>/
+        # copy the example into the current folder
         try:
-            written = copy_example(geometry_type, name, Path(name), force=force)
+            written = copy_example(geometry_type, name, Path("."), force=force)
         except KeyError:
             known = ", ".join(examples)
             typer.echo(f"error: unknown example {name!r}; available: {known}", err=True)
@@ -174,6 +181,6 @@ def build_examples_command(geometry_type: str) -> Callable[..., None]:
         # report the files and the next step
         for path in written:
             typer.echo(f"wrote {path}")
-        typer.echo(f"then: cd {name} && grid-generator {geometry_type} run")
+        typer.echo(f"then: grid-generator {geometry_type} run")
 
     return cmd_examples
