@@ -12,6 +12,7 @@ from typing import Annotated
 import typer
 
 from grid_generator.body_fitted import generate_body_fitted
+from grid_generator.cli.examples_command import build_examples_command, list_examples
 from grid_generator.cli.help_text import format_examples
 from grid_generator.config import (
     BODY_BLOCKS,
@@ -186,5 +187,9 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
             typer.echo("  quality of the (x, y) plane, the same at every z:")
         typer.echo(quality.summary())
         typer.echo(f"Wrote: {output_path}")
+
+    # examples: bundled cases, copied into ./<name>/ to run (only types that ship some)
+    if list_examples(geometry_type):
+        geometry_app.command("examples")(build_examples_command(geometry_type))
 
     return geometry_app

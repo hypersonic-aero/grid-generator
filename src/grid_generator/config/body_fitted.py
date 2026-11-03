@@ -13,6 +13,10 @@ the nose spacing, so the wall spacing is continuous across the junction.
 
 An optional [span] table extrudes the 2D grid in z into a 3D grid (plate and wedge
 only). It takes the same distribution types and keys as the Cartesian axes.
+
+The grid reaches either a constant height from the wall ([domain] height) or a
+shock-aligned outer boundary ([outer]: a shock curve and a margin; see
+grid_generator.outer).
 """
 
 # --------------------------------------------------
@@ -72,7 +76,31 @@ class DomainConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     x_end: float = Field(gt=0.0, description="End of the grid along x, from the nose tip [m]")
-    height: float = Field(gt=0.0, description="Constant wall-normal height of the grid [m]")
+    height: float | None = Field(
+        default=None,
+        gt=0.0,
+        description="Constant wall-normal height of the grid [m] (or a shock-aligned [outer])",
+    )
+
+
+class OuterConfig(BaseModel):
+    """Shock-aligned outer boundary: a shock curve, and how far beyond it the grid reaches.
+
+    Each wall-normal grid line ends at margin_factor * d + min_offset, with d its
+    distance to the shock. A relative shock path is resolved against the config
+    file's folder.
+    """
+
+    # reject misspelled keys
+    model_config = ConfigDict(extra="forbid")
+
+    shock: Path = Field(description="Shock curve: CSV file with x, y columns and a header line")
+    margin_factor: float = Field(
+        default=1.2, ge=1.0, description="Factor on the wall-to-shock distance"
+    )
+    min_offset: float = Field(
+        default=0.0, ge=0.0, description="Distance added beyond the scaled shock distance [m]"
+    )
 
 
 class NosePointsConfig(BaseModel):
@@ -139,6 +167,7 @@ class BodyFittedConfig(BaseModel):
     output: OutputConfig
     span: Annotated[DistributionSpec | None, BeforeValidator(parse_span)] = None
     markers: MarkersConfig = Field(default_factory=MarkersConfig)
+    outer: OuterConfig | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -175,6 +204,26 @@ class BodyFittedConfig(BaseModel):
         return filled
 
     @model_validator(mode="after")
+    def _check_one_outer_boundary(self) -> BodyFittedConfig:
+        """The grid lines end either at [domain] height or at the shock-aligned [outer]."""
+
+        # check: exactly one of the two
+        has_height = self.domain.height is not None
+        has_outer = self.outer is not None
+        if has_height and has_outer:
+            raise ValueError(
+                "give either [domain] height (constant height) or an [outer] table "
+                "(shock-aligned), not both"
+            )
+        if not has_height and not has_outer:
+            raise ValueError(
+                "the grid needs an outer boundary: [domain] height (constant height) or an "
+                "[outer] table (shock-aligned)"
+            )
+
+        return self
+
+    @model_validator(mode="after")
     def _check_domain_fits_the_geometry(self) -> BodyFittedConfig:
         """Check x_end lies on the body, and the point distributions fit the geometry."""
 
@@ -197,9 +246,11 @@ class BodyFittedConfig(BaseModel):
 
         # build the body and normal distributions (raises labelled errors for bad tables)
         point_counts = {"points.nose": self.points.nose.n_points}
+        # (shock-aligned grids get their heights from the shock; check the table at x_end)
+        nominal_height = self.domain.height if self.domain.height is not None else x_end
         specs = {
             "points.body": self.body_distribution(),
-            "points.normal": self.normal_distribution(),
+            "points.normal": self.normal_distribution(nominal_height),
         }
         for label, spec in specs.items():
             try:
@@ -301,18 +352,28 @@ class BodyFittedConfig(BaseModel):
 
         return body_spec
 
-    def normal_distribution(self) -> DistributionSpec:
-        """Wall-normal points, from the wall (0) to [domain] height.
+    def normal_distribution(self, height: float | None = None) -> DistributionSpec:
+        """Wall-normal points, from the wall (0) to a height.
+
+        Args:
+            height: Height of this grid line [m]; [domain] height when omitted
+                (shock-aligned grids pass each line's own height).
 
         Returns:
             Distribution spec in wall distance [m].
 
         Raises:
-            ValueError: If the [points.normal] table is invalid.
+            ValueError: If the [points.normal] table is invalid, or no height is known.
         """
 
+        # default: the constant [domain] height
+        if height is None:
+            height = self.domain.height
+        if height is None:
+            raise ValueError("a shock-aligned grid gives each line its own height")
+
         # extract
-        normal_spec = build_normal_spec(self.points.normal, self.domain.height)
+        normal_spec = build_normal_spec(self.points.normal, height)
 
         return normal_spec
 
@@ -362,5 +423,11 @@ def load_body_fitted_config(path: str | Path, expected_type: str | None = None) 
     output_file = path.parent / config.output.filename
     resolved_output = config.output.model_copy(update={"filename": output_file})
     resolved_config = config.model_copy(update={"output": resolved_output})
+
+    # resolve the shock curve path the same way
+    if resolved_config.outer is not None:
+        shock_file = path.parent / resolved_config.outer.shock
+        resolved_outer = resolved_config.outer.model_copy(update={"shock": shock_file})
+        resolved_config = resolved_config.model_copy(update={"outer": resolved_outer})
 
     return resolved_config

@@ -12,8 +12,17 @@ polar about the nose centre), then the configured body distribution starting fro
 the nose spacing, so the spacing is continuous across the junction. The body may be
 straight (plate, wedge, cone) or curved (tangent ogive, with an optional cylinder).
 
-No shock alignment yet: H is constant, and the user picks it large enough to
-clear the bow shock.
+H is either constant ([domain] height, picked large enough to clear the bow shock),
+or the grid has a shock-aligned outer boundary ([outer]): a smooth curve a margin
+beyond the shock, with the outer points spaced smoothly along it (see
+grid_generator.outer). Each line then leaves the wall along the normal and bends
+toward its outer point,
+
+    x(i, j) = wall(s_i) + n_j * normal(s_i) + (n_j / h_i)^2 * shift_i,
+
+with h_i the outer point's distance along the normal and shift_i its offset across
+it. The wall-normal distribution keeps its first spacing and point count on every
+line; only its stretching follows the line's height.
 
 With a [span] table (plate and wedge), the 2D plane is extruded in z: the same
 (x, y) plane at every z of the span distribution, giving a 3D grid.
@@ -37,6 +46,7 @@ from grid_generator.config.body_fitted import (
     load_body_fitted_config,
 )
 from grid_generator.distributions import DistributionSpec, EquidistantSpec, build_distribution
+from grid_generator.outer import outer_points, read_shock_curve
 
 # --------------------------------------------------
 # constants
@@ -88,16 +98,12 @@ def generate_body_fitted(source: BodyFittedConfig | str | Path) -> Dataset:
     # arc lengths of the wall points: nose, then body
     s_wall = wall_arc_lengths(profile, config.points.nose.n_points, config.body_distribution())
 
-    # wall-normal distances: from the wall up to the height
-    n_dist = build_distribution(config.normal_distribution())
-
     # exact wall points and normals
     x_wall, y_wall = profile.point(s_wall)
     nx, ny = profile.normal(s_wall)
 
-    # j-lines straight out along the wall normals: (ni, nj)
-    x_plane = x_wall[:, None] + n_dist[None, :] * nx[:, None]
-    y_plane = y_wall[:, None] + n_dist[None, :] * ny[:, None]
+    # j-lines from the wall out to the outer boundary: (ni, nj)
+    x_plane, y_plane = build_grid_lines(config, x_wall, y_wall, nx, ny)
 
     # span: the z-planes to extrude to, or the single plane z = 0 for a 2D grid
     if config.span is not None:
@@ -140,6 +146,88 @@ def generate_body_fitted(source: BodyFittedConfig | str | Path) -> Dataset:
         },
     )
     return dataset
+
+
+def build_grid_lines(
+    config: BodyFittedConfig,
+    x_wall: NDArray[np.float64],
+    y_wall: NDArray[np.float64],
+    nx: NDArray[np.float64],
+    ny: NDArray[np.float64],
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """The j-lines: from each wall point out to the outer boundary.
+
+    Args:
+        config: Validated configuration.
+        x_wall: Wall points x [m].
+        y_wall: Wall points y [m].
+        nx: Unit wall normals, x component.
+        ny: Unit wall normals, y component.
+
+    Returns:
+        Grid x and y [m], shape (ni, nj).
+
+    Raises:
+        ValueError: If a wall normal misses the outer boundary, or [points.normal]
+            doesn't give every line the same number of points.
+    """
+
+    # constant height: straight lines along the wall normals, all with the same distribution
+    if config.outer is None:
+        n_line = build_distribution(config.normal_distribution())
+        x_plane = x_wall[:, None] + n_line[None, :] * nx[:, None]
+        y_plane = y_wall[:, None] + n_line[None, :] * ny[:, None]
+        return x_plane, y_plane
+
+    # shock-aligned: the outer end of every line, on a smooth curve beyond the shock
+    shock_x, shock_y = read_shock_curve(config.outer.shock)
+    outer_x, outer_y = outer_points(
+        x_wall,
+        y_wall,
+        nx,
+        ny,
+        shock_x,
+        shock_y,
+        config.outer.margin_factor,
+        config.outer.min_offset,
+    )
+
+    # each line: along the normal at the wall, bending toward its outer point
+    lines_x = []
+    lines_y = []
+    for i in range(x_wall.size):
+        # split the reach into a part along the normal and a shift across it
+        reach_x = outer_x[i] - x_wall[i]
+        reach_y = outer_y[i] - y_wall[i]
+        height = reach_x * nx[i] + reach_y * ny[i]
+        shift_x = reach_x - height * nx[i]
+        shift_y = reach_y - height * ny[i]
+
+        # the same normal distribution (first spacing, points) stretched to this height
+        try:
+            n_line = build_distribution(config.normal_distribution(float(height)))
+        except ValueError as error:
+            raise ValueError(
+                f"[points.normal] at a line height of {height:.4g} m: {error}"
+            ) from None
+
+        # the shift grows quadratically, so the line leaves the wall along the normal
+        fraction = n_line / height
+        lines_x.append(x_wall[i] + n_line * nx[i] + fraction**2 * shift_x)
+        lines_y.append(y_wall[i] + n_line * ny[i] + fraction**2 * shift_y)
+
+    # check: a structured grid needs the same number of points on every line
+    counts = {line.size for line in lines_x}
+    if len(counts) > 1:
+        raise ValueError(
+            "[points.normal] gives the lines different numbers of points "
+            f"({min(counts)} to {max(counts)}); set n_points for a shock-aligned grid"
+        )
+
+    x_plane = np.vstack(lines_x)
+    y_plane = np.vstack(lines_y)
+
+    return x_plane, y_plane
 
 
 def wall_arc_lengths(

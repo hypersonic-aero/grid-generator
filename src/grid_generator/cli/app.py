@@ -7,7 +7,7 @@ from typing import Annotated
 
 import typer
 
-from grid_generator.cli.callbacks import version_callback
+from grid_generator.cli.callbacks import verbose_callback, version_callback
 from grid_generator.cli.cmd_cartesian import cartesian_app
 from grid_generator.cli.cmd_distribution import distribution_app
 from grid_generator.cli.cmd_geometry import GEOMETRY_HELP, build_geometry_app
@@ -38,10 +38,19 @@ def main(
             help="Show version and exit.",
         ),
     ] = False,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            "-v",
+            callback=verbose_callback,
+            help="Enable verbose (debug) output.",
+        ),
+    ] = False,
 ) -> None:
     """Generate structured computational grids."""
 
-    del version
+    del version, verbose
 
 
 # --------------------------------------------------

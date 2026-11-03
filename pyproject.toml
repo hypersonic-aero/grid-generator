@@ -54,6 +54,10 @@ Documentation = "https://uahypersonics.github.io/grid-generator"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+# bundled example cases: examples/<geometry type>/<name>/<files>
+"grid_generator" = ["examples/*/*/*"]
+
 [tool.setuptools_scm]
 
 [tool.pytest.ini_options]
