@@ -22,6 +22,7 @@ from grid_generator.distributions.models import (
     SegmentedSpec,
     SegmentSpec,
     TanhSpec,
+    VinokurSpec,
 )
 
 # --------------------------------------------------
@@ -32,6 +33,7 @@ DISTRIBUTION_KEYS: dict[str, set[str]] = {
     "equidistant": {"type", "start", "end", "n_points"},
     "geometric": {"type", "start", "end", "n_points", "ratio", "first_spacing", "max_spacing"},
     "tanh": {"type", "start", "end", "n_points", "strength", "cluster"},
+    "vinokur": {"type", "start", "end", "n_points", "first_spacing", "end_spacing"},
     "segmented": {"type", "start", "segments"},
 }
 
@@ -80,7 +82,7 @@ def _parse_complete_distribution(
     label: str,
     kind: str,
 ) -> DistributionSpec:
-    """Parse an equidistant, geometric, or tanh axis."""
+    """Parse an equidistant, geometric, tanh, or vinokur axis."""
 
     if kind not in DISTRIBUTION_KEYS:
         valid = ", ".join(DISTRIBUTION_KEYS)
@@ -114,6 +116,16 @@ def _parse_complete_distribution(
             ratio=float(ratio) if ratio is not None else None,
             first_spacing=float(first_spacing) if first_spacing is not None else None,
             max_spacing=float(max_spacing) if max_spacing is not None else None,
+        )
+    elif kind == "vinokur":
+        spacing_keys = {"first_spacing", "end_spacing"}
+        missing_spacings = sorted(spacing_keys - set(value))
+        if missing_spacings:
+            raise ValueError(f"[{label}] is missing fields: {', '.join(missing_spacings)}")
+        distribution = VinokurSpec(
+            **common,
+            first_spacing=float(value["first_spacing"]),
+            end_spacing=float(value["end_spacing"]),
         )
     else:
         if "strength" not in value:

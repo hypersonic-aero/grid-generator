@@ -1,0 +1,83 @@
+# Golden grid: a frozen config whose grid must not change (tests/test_golden.py).
+# A deliberate change: rerun tests/golden/make_golden.py, and say why in the commit.
+
+# Flat plate with a circular leading edge (upper half), same contract as
+# canonical-geometries (geometry plate init) without length: the plate ends at
+# [domain] x_end.
+# Stagnation point at the origin, x downstream, y up.
+[geometry]
+# type marker
+type = "plate"
+# nose radius in [m]
+nose_radius = 100.0e-6
+
+# Extent of the grid.
+[domain]
+# end of the grid (and of the body) along x, measured from nose tip in [m]
+x_end = 0.01
+# constant wall-normal height of the grid in [m]; must clear the bow shock at x_end
+# (for this Mach 6 plate case the shock is at about 2.8 mm at x = 10 mm)
+height = 5.0e-3
+
+# Point distributions: the same types and keys as the Cartesian axes, without start
+# and end (the geometry and [domain] fix them). Wall points: nose + body - 1 (nose
+# and body share the junction).
+
+# along the wall, nose arc: equal angle steps (a polar block around the nose)
+[points.nose]
+# points on the nose arc
+n_points = 81
+
+# along the wall, body: from the junction to x_end, in regions. Segment ends in x [m];
+# spacings along the wall [m], rounded to whole cells. The first region keeps the
+# nose spacing (its end moves to a whole number of nose spacings), so the wall spacing
+# is continuous across the junction; the last region ends at x_end.
+[points.body]
+type = "segmented"
+
+# fine: the nose spacing up to x = 0.2 mm
+[[points.body.segments]]
+type = "equidistant"
+end = 0.2e-3
+
+# transition: the spacing changes smoothly (quintic) up to x = 2 mm
+[[points.body.segments]]
+type = "quintic"
+end = 2.0e-3
+n_points = 81
+
+# coarse: 50 micron spacing up to x_end
+[[points.body.segments]]
+type = "equidistant"
+spacing = 50.0e-6
+
+# away from the wall: from the wall to [domain] height, tanh clustering
+[points.normal]
+type = "tanh"
+# points in the wall-normal direction
+n_points = 101
+# clustering strength: larger means smaller cells where clustered (3.0 gives a first
+# spacing of about 1.5 micron for this height and n_points)
+strength = 3.0
+# cluster at the wall ("start"), at the outer boundary ("end"), or at both ("both")
+cluster = "start"
+
+# Boundary names in the grid file; the solver input assigns the boundary conditions to
+# them. Two sides may share a name.
+[markers]
+# the body
+wall = "wall"
+# outer boundary
+outer = "farfield"
+# outflow plane at x_end
+outflow = "outflow"
+# stagnation line ahead of the nose (on the axis for axisymmetric bodies)
+symmetry = "symmetry"
+
+# The path is relative to this file.
+[output]
+# grid file; the extension picks the format via cfd-io (.su2, .h5, .p2dfmt, .msh, ...)
+filename = "plate_local.su2"
+# element order, for .msh only: 1 (straight-edged quads) or 2 (curved 9-node quads
+# for high-order solvers; needs odd point counts in [points.nose], [points.body], [points.normal])
+order = 1

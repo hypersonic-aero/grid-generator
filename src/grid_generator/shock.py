@@ -1,26 +1,28 @@
-"""Shock-aligned outer boundary: a smooth curve beyond the shock, and the grid's outer points on it.
+"""Shock-line grids: the shock curve, the grid's points on it, and the outer boundary beyond it.
 
-The [outer] table names a shock curve (x, y columns in a CSV file, e.g. written by
-`flow-theory shock-shape run` with a .csv output). A curve that stops at the outflow
-or a little before it (a shock taken from a CFD solution ends at its domain end) is
-first continued straight past it. The outer boundary is built in three steps:
+The [shock] table names a shock curve (x, y columns in a CSV file, e.g. written by
+`flow-theory shock-shape run` with a .csv output, or a shock taken from a CFD
+solution). A curve that stops at the outflow or a little before it (a shock taken
+from a CFD solution ends at its domain end) is first continued straight past it.
+Two curves then carry one point per grid line:
 
-1. Outer curve: every shock point is pushed out along the shock's own outward
+1. Shock line (j = j_s): each wall normal's crossing with the shock curve.
+2. Outer curve: every shock point is pushed out along the shock's own outward
    normal by (margin_factor - 1) * d + min_offset, with d its distance from the
    wall. Offsetting a convex curve outward keeps it as smooth as the shock, so
    the outer boundary has no corners (e.g. where the nose meets the body).
    The normal is averaged along the shock over that same distance, so wiggles
    smaller than the margin (e.g. noise in a shock taken from a CFD solution)
-   can't fold the outer curve.
-2. Outer points: each wall normal's crossing with the outer curve, then the
-   spacing between neighbouring crossings is smoothed (in log scale, over a few
-   points), so it has no jumps either. The first (on the axis) and the last (the
-   outflow line) stay where they are.
-3. The grid lines (built in body_fitted) leave the wall along its normal and bend
-   toward these points.
+   can't fold the outer curve. Its points are each wall normal's crossing too.
 
-The shock is assumed symmetric about the axis (or symmetry plane) y = 0; the outer
-curve is mirrored there, so the stagnation line ahead of the nose crosses it cleanly.
+On both curves the spacing between neighbouring crossings is then smoothed (in log
+scale, over a few points), so it has no jumps. The first point (on the axis) and the
+last (the outflow line) stay where they are. The grid lines (built in body_fitted)
+leave the wall along its normal, bend toward their shock point, and continue from
+there to their outer point.
+
+The shock is assumed symmetric about the axis (or symmetry plane) y = 0; both curves
+are mirrored there, so the stagnation line ahead of the nose crosses them cleanly.
 """
 
 # --------------------------------------------------
@@ -93,49 +95,40 @@ def read_shock_curve(path: str | Path) -> tuple[NDArray[np.float64], NDArray[np.
     return shock_x, shock_y
 
 
-def outer_points(
+def points_on_curve(
     x_wall: NDArray[np.float64],
     y_wall: NDArray[np.float64],
     nx: NDArray[np.float64],
     ny: NDArray[np.float64],
-    shock_x: NDArray[np.float64],
-    shock_y: NDArray[np.float64],
-    margin_factor: float,
-    min_offset: float,
+    curve_x: NDArray[np.float64],
+    curve_y: NDArray[np.float64],
+    curve_name: str,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """Outer end of every grid line: on a smooth curve beyond the shock, smoothly spaced.
+    """One point per grid line on a curve (the shock or the outer curve), smoothly spaced.
 
     Args:
         x_wall: Wall points x [m], from the stagnation point to the outflow.
         y_wall: Wall points y [m].
         nx: Unit wall normals, x component.
         ny: Unit wall normals, y component.
-        shock_x: Shock x [m], from the vertex outward.
-        shock_y: Shock y [m], from the vertex outward.
-        margin_factor: Factor on the shock's distance from the wall (>= 1).
-        min_offset: Distance added beyond the scaled shock distance [m].
+        curve_x: Curve x [m], from the axis outward.
+        curve_y: Curve y [m], from the axis outward.
+        curve_name: Name of the curve for error messages, e.g. "shock curve".
 
     Returns:
-        Outer points x and y [m], one per wall point.
+        Points x and y [m] on the curve, one per wall point.
 
     Raises:
-        ValueError: If the shock curve stops too far before the outflow to continue
-            it, or a wall normal doesn't reach the outer curve.
+        ValueError: If a wall normal doesn't reach the curve.
     """
 
-    # a shock that stops at (or a little before) the outflow: continue it straight past it
-    shock_x, shock_y = extend_shock(shock_x, shock_y, x_wall, y_wall, margin_factor, min_offset)
-
-    # outer curve: the shock pushed out by the margin
-    curve_x, curve_y = offset_shock(shock_x, shock_y, x_wall, y_wall, margin_factor, min_offset)
-
     # where each wall normal crosses it (arc length along the curve)
-    arc = normal_crossings(x_wall, y_wall, nx, ny, curve_x, curve_y)
+    arc = normal_crossings(x_wall, y_wall, nx, ny, curve_x, curve_y, curve_name)
 
     # even out the spacing between neighbouring crossings, keeping both ends
     arc_smooth = smooth_spacing(arc)
 
-    # the outer points at those arc lengths
+    # the points at those arc lengths
     curve_arc = _cumulative_arc_length(curve_x, curve_y)
     point_x = np.interp(arc_smooth, curve_arc, curve_x)
     point_y = np.interp(arc_smooth, curve_arc, curve_y)
@@ -274,6 +267,7 @@ def normal_crossings(
     ny: NDArray[np.float64],
     curve_x: NDArray[np.float64],
     curve_y: NDArray[np.float64],
+    curve_name: str,
 ) -> NDArray[np.float64]:
     """Arc length along a curve where each wall normal crosses it.
 
@@ -287,6 +281,7 @@ def normal_crossings(
         ny: Unit wall normals, y component.
         curve_x: Curve x [m], from the axis outward.
         curve_y: Curve y [m], from the axis outward.
+        curve_name: Name of the curve for error messages, e.g. "shock curve".
 
     Returns:
         Arc length [m] of each crossing, measured along the curve from the axis.
@@ -324,8 +319,8 @@ def normal_crossings(
         ahead = np.isfinite(t) & (t > 0.0) & inside
         if not np.any(ahead):
             raise ValueError(
-                f"the wall normal at x = {x_wall[i]:.6g} m doesn't reach the outer "
-                "boundary; the shock curve must extend past the outflow (raise its x_e)"
+                f"the wall normal at x = {x_wall[i]:.6g} m doesn't reach the {curve_name}; "
+                "the shock curve must extend past the outflow (raise its x_e)"
             )
 
         # nearest crossing, as arc length along the curve (not below the axis)
@@ -360,8 +355,11 @@ def smooth_spacing(arc: NDArray[np.float64]) -> NDArray[np.float64]:
     kernel = np.exp(-0.5 * (offsets / _SPACING_SMOOTHING_WIDTH) ** 2)
     kernel = kernel / kernel.sum()
 
-    # smooth, mirroring the ends so they aren't pulled toward zero
-    padded = np.pad(log_spacing, half_width, mode="reflect")
+    # smooth, mirroring the ends so they aren't pulled toward zero; the odd reflection
+    # continues a trend past the ends (geometric growth is a straight line in log
+    # spacing), so growing cells aren't cut short there, which the rescale below would
+    # otherwise make up by shifting every point along the curve
+    padded = np.pad(log_spacing, half_width, mode="reflect", reflect_type="odd")
     smoothed = np.exp(np.convolve(padded, kernel, mode="valid"))
 
     # rescale to the original total, so both ends stay fixed

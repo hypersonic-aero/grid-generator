@@ -22,7 +22,7 @@ from grid_generator.config import (
 )
 from grid_generator.config.body_fitted import AXISYMMETRIC_TYPES
 from grid_generator.config.templates import DEFAULT_BODY, DEFAULT_NORMAL
-from grid_generator.quality import grid_quality
+from grid_generator.quality import grid_quality, shock_line_quality
 
 # --------------------------------------------------
 # registry: one command group per geometry type
@@ -59,6 +59,7 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
         (f"{command} init", "defaults"),
         (f"{command} init --body segmented", "segmented body"),
         (f"{command} init --normal tanh", "tanh wall-normal"),
+        (f"{command} init --shock", "shock-line grid (needs a shock curve)"),
     ]
     if planar:
         examples.append((f"{command} init --span", "extruded in z (3D)"))
@@ -74,7 +75,7 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
     default_config = Path(f"{geometry_type}.toml")
 
     # init summary names its options, so they show in the command list
-    init_options = "--body, --normal, --span" if planar else "--body, --normal"
+    init_options = "--body, --normal, --span, --shock" if planar else "--body, --normal, --shock"
     init_help = f"Create a starter configuration ({init_options})."
 
     # init: write the starter configuration for this geometry
@@ -93,15 +94,27 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
             typer.Option(help=f"Body distribution along the wall: {', '.join(BODY_BLOCKS)}."),
         ] = DEFAULT_BODY,
         normal: Annotated[
-            str,
-            typer.Option(help=f"Wall-normal distribution: {', '.join(NORMAL_BLOCKS)}."),
-        ] = DEFAULT_NORMAL,
+            str | None,
+            typer.Option(
+                help=(
+                    f"Wall-normal distribution: {', '.join(NORMAL_BLOCKS)} "
+                    f"(default {DEFAULT_NORMAL}; constant-height grids)."
+                )
+            ),
+        ] = None,
         span: Annotated[
             bool,
             typer.Option(
                 "--span",
                 # the backslash keeps the help formatter from reading [span] as markup
                 help="Add a \\[span] table: extrude the grid in z (3D).",
+            ),
+        ] = False,
+        shock: Annotated[
+            bool,
+            typer.Option(
+                "--shock",
+                help="Shock-line grid: the shock (a curve file) is a grid line.",
             ),
         ] = False,
     ) -> None:
@@ -111,8 +124,15 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
         if body not in BODY_BLOCKS:
             typer.echo(f"error: --body must be one of: {', '.join(BODY_BLOCKS)}", err=True)
             raise typer.Exit(code=1)
-        if normal not in NORMAL_BLOCKS:
+        if normal is not None and normal not in NORMAL_BLOCKS:
             typer.echo(f"error: --normal must be one of: {', '.join(NORMAL_BLOCKS)}", err=True)
+            raise typer.Exit(code=1)
+        if shock and normal is not None:
+            typer.echo(
+                "error: --normal picks [points.normal], which a shock-line grid (--shock) "
+                "doesn't have",
+                err=True,
+            )
             raise typer.Exit(code=1)
         if span and geometry_type in AXISYMMETRIC_TYPES:
             typer.echo(
@@ -127,12 +147,16 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
             raise typer.Exit(code=1)
 
         # write and validate the starter configuration
-        template = body_fitted_template(geometry_type, body=body, normal=normal, span=span)
+        template = body_fitted_template(
+            geometry_type, body=body, normal=normal, span=span, shock=shock
+        )
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(template, encoding="utf-8")
         load_body_fitted_config(output, expected_type=geometry_type)
 
         typer.echo(f"Created: {output}")
+        if shock:
+            typer.echo("Put the shock curve next to it (see [shock] curve).")
         typer.echo(f"Edit the file, then run: grid-generator {geometry_type} run -c {output}")
 
     # run: generate the grid from a configuration, report its quality and write it
@@ -160,6 +184,13 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
             plane = StructuredGrid(x=grid.x[:, :, :1], y=grid.y[:, :, :1], z=grid.z[:, :, :1])
             quality = grid_quality(plane)
 
+            # shock-line grids: where the shock line sits, and the spacing around it
+            shock_line_j = dataset.attrs.get("shock_line_j")
+            shock_quality = None
+            if shock_line_j is not None:
+                wall_spacing = body_fitted_config.points.shock_layer.first_spacing
+                shock_quality = shock_line_quality(plane, shock_line_j, wall_spacing)
+
             # write: Gmsh gets the element order, which the file extension can't carry;
             # everything else by extension, in double precision (cfd-io's HDF5 default is float32)
             output_file = body_fitted_config.output.filename
@@ -186,6 +217,8 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
         if nk > 1:
             typer.echo("  quality of the (x, y) plane, the same at every z:")
         typer.echo(quality.summary())
+        if shock_quality is not None:
+            typer.echo(shock_quality.summary())
         typer.echo(f"Wrote: {output_path}")
 
     # examples: bundled cases, copied into ./<name>/ to run (only types that ship some)

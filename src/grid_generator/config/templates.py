@@ -3,7 +3,8 @@
 The templates are put together from TOML blocks: per geometry (description,
 [geometry], [domain]), and shared blocks for the points, span, markers and output. The body
 and wall-normal distributions each have a choice of block (init --body, --normal),
-the span block is optional (init --span), and Cartesian grids pick their axes
+the span block is optional (init --span), a shock-line grid replaces the constant
+height and the wall-normal block (init --shock), and Cartesian grids pick their axes
 (init --dims). 1D distributions take their example from the distribution reference
 (init --type). Every combination is a complete, valid file.
 """
@@ -113,9 +114,6 @@ nose_radius = 100.0e-6
 [domain]
 # end of the grid (and of the body) along x, measured from nose tip in [m]
 x_end = 0.01
-# constant wall-normal height of the grid in [m]; must clear the bow shock at x_end
-# (for this Mach 6 plate case the shock is at about 2.8 mm at x = 10 mm)
-height = 5.0e-3
 """,
     "wedge": """\
 # Planar blunted wedge (upper half), same contract as canonical-geometries
@@ -134,8 +132,6 @@ half_angle = 7.0
 [domain]
 # end of the grid (and of the body) along x, measured from nose tip in [m]
 x_end = 0.01
-# constant wall-normal height of the grid in [m]; must clear the bow shock at x_end
-height = 5.0e-3
 """,
     "cone": """\
 # Sphere-cone, axisymmetric about the x axis, same contract as canonical-geometries
@@ -155,8 +151,6 @@ half_angle = 7.0
 [domain]
 # end of the grid (and of the body) along x, measured from nose tip in [m]
 x_end = 0.01
-# constant wall-normal height of the grid in [m]; must clear the bow shock at x_end
-height = 5.0e-3
 """,
     "tangent-ogive": """\
 # Spherically blunted tangent ogive, axisymmetric about the x axis, same contract as
@@ -180,10 +174,45 @@ base_radius = 0.05
 # end of the grid along x, measured from nose tip in [m]: on the ogive, or past its
 # base (then on a cylinder of the base radius)
 x_end = 0.01
-# constant wall-normal height of the grid in [m]; must clear the bow shock at x_end
-height = 5.0e-3
 """,
 }
+
+
+# --------------------------------------------------
+# body-fitted grids: the outer boundary, a constant height or a shock line
+# --------------------------------------------------
+# a constant height ends the geometry's [domain] block
+CONSTANT_HEIGHT_LINES = """\
+# constant wall-normal height of the grid in [m]; must clear the bow shock at x_end
+height = 5.0e-3
+"""
+
+HEIGHT_LINES: dict[str, str] = {
+    "plate": """\
+# constant wall-normal height of the grid in [m]; must clear the bow shock at x_end
+# (for this Mach 6 plate case the shock is at about 2.8 mm at x = 10 mm)
+height = 5.0e-3
+""",
+    "wedge": CONSTANT_HEIGHT_LINES,
+    "cone": CONSTANT_HEIGHT_LINES,
+    "tangent-ogive": CONSTANT_HEIGHT_LINES,
+}
+
+# a shock line follows [domain] instead (init --shock)
+SHOCK_BLOCK = """\
+# Shock line: the bow shock is a grid line, the same one (j = [points.shock_layer]
+# n_points - 1) on every grid line, so a solution's captured shock stays in one row
+# of cells. The lines run from the wall to the shock, then on to the outer boundary.
+[shock]
+# shock curve for this body: CSV with x, y columns and a header line, e.g. from
+# flow-theory shock-shape run with a .csv output, or a shock taken from a CFD
+# solution; the path is relative to this file
+curve = "shock.csv"
+# outer boundary: margin_factor x the wall-to-shock distance, plus min_offset
+margin_factor = 1.5
+# distance added beyond the scaled shock distance in [m]
+min_offset = 0.0
+"""
 
 
 # --------------------------------------------------
@@ -268,6 +297,30 @@ cluster = "start"
 }
 
 
+# a shock-line grid's points away from the wall, in its two segments (init --shock)
+SHOCK_LINE_POINTS_BLOCK = """\
+# away from the wall, in the shock layer: from the wall to the shock, two-sided
+# stretching (fine at the wall for the boundary layer, and again at the shock)
+[points.shock_layer]
+# distribution type: vinokur (a given spacing at both ends)
+type = "vinokur"
+# points from the wall to the shock, both included
+n_points = 161
+# wall spacing in [m]; lowered on lines too short for it (near a small nose)
+first_spacing = 1.0e-6
+# spacing at the shock, as a fraction of each line's wall-to-shock distance
+end_spacing_fraction = 0.01
+
+# beyond the shock: from the shock to the outer boundary, growing from the spacing at
+# the shock (automatic), so the spacing is continuous across the shock
+[points.freestream]
+# distribution type: geometric
+type = "geometric"
+# points from the shock to the outer boundary, both included
+n_points = 41
+"""
+
+
 # --------------------------------------------------
 # body-fitted grids: optional span, and output
 # --------------------------------------------------
@@ -310,7 +363,7 @@ BODY_FITTED_OUTPUT_BLOCK = """\
 # grid file; the extension picks the format via cfd-io (.su2, .h5, .p2dfmt, .msh, ...)
 filename = "{geometry_type}_local.su2"
 # element order, for .msh only: 1 (straight-edged quads) or 2 (curved 9-node quads
-# for high-order solvers; needs odd point counts in [points.nose], [points.body], [points.normal])
+# for high-order solvers; needs odd point counts in every [points] table)
 order = 1
 """
 
@@ -378,23 +431,36 @@ def cartesian_template(dims: int = CARTESIAN_DEFAULT_DIMS) -> str:
 def body_fitted_template(
     geometry_type: str,
     body: str = DEFAULT_BODY,
-    normal: str = DEFAULT_NORMAL,
+    normal: str | None = None,
     span: bool = False,
+    shock: bool = False,
 ) -> str:
     """Starter configuration for a body-fitted grid.
 
     Args:
         geometry_type: Key in BODY_FITTED_GEOMETRY_BLOCKS, e.g. "plate".
         body: Key in BODY_BLOCKS: the body distribution along the wall.
-        normal: Key in NORMAL_BLOCKS: the wall-normal distribution.
+        normal: Key in NORMAL_BLOCKS: the wall-normal distribution of a
+            constant-height grid (default: DEFAULT_NORMAL).
         span: Add a [span] table (extrusion in z; planar bodies only).
+        shock: Write a shock-line grid ([shock], [points.shock_layer],
+            [points.freestream]) instead of a constant-height one.
 
     Returns:
         TOML text, as `grid-generator <geometry_type> init` writes it.
 
     Raises:
-        ValueError: If a key isn't in its registry.
+        ValueError: If a key isn't in its registry, or a normal distribution is
+            picked for a shock-line grid.
     """
+
+    # validate inputs: a shock-line grid has no [points.normal] to pick
+    if shock and normal is not None:
+        raise ValueError(
+            "a normal distribution sets [points.normal], which a shock-line grid doesn't have"
+        )
+    if normal is None:
+        normal = DEFAULT_NORMAL
 
     # validate inputs
     choices = [
@@ -414,19 +480,24 @@ def body_fitted_template(
         options += f" --normal {normal}"
     if span:
         options += " --span"
+    if shock:
+        options += " --shock"
     header = (
         f"# Generated by: grid-generator {geometry_type} init{options}\n"
         f"# Edit this file, then run: grid-generator {geometry_type} run -c {geometry_type}.toml\n"
     )
 
+    # geometry and [domain], ended by the constant height, or followed by [shock]
+    geometry_block = BODY_FITTED_GEOMETRY_BLOCKS[geometry_type]
+    if shock:
+        outer_blocks = [geometry_block, SHOCK_BLOCK]
+        normal_block = SHOCK_LINE_POINTS_BLOCK
+    else:
+        outer_blocks = [geometry_block + HEIGHT_LINES[geometry_type]]
+        normal_block = NORMAL_BLOCKS[normal]
+
     # join the blocks
-    blocks = [
-        header,
-        BODY_FITTED_GEOMETRY_BLOCKS[geometry_type],
-        BODY_FITTED_NOSE_BLOCK,
-        BODY_BLOCKS[body],
-        NORMAL_BLOCKS[normal],
-    ]
+    blocks = [header, *outer_blocks, BODY_FITTED_NOSE_BLOCK, BODY_BLOCKS[body], normal_block]
     if span:
         blocks.append(SPAN_BLOCK)
         blocks.append(MARKERS_BLOCK + SPAN_MARKERS_LINES)

@@ -58,6 +58,9 @@ class GeometricSpec:
             length = self.end - self.start
             if not 0.0 < self.first_spacing < length:
                 raise ValueError("geometric first_spacing must be between zero and the length")
+            # two points leave one cell, the whole length: no first spacing to set
+            if self.n_points < 3:
+                raise ValueError("geometric first_spacing needs n_points of at least 3")
 
         # check the cap: growth from first_spacing must be needed, and possible below the cap
         if self.max_spacing is not None:
@@ -85,6 +88,55 @@ class TanhSpec:
             raise ValueError("tanh strength must be greater than zero")
         if self.cluster not in {"start", "end", "both"}:
             raise ValueError("tanh cluster must be 'start', 'end', or 'both'")
+
+
+@dataclass(frozen=True, slots=True)
+class VinokurSpec:
+    """Two-sided stretching (Vinokur): a given spacing at each endpoint.
+
+    The cells are finest at the ends, so the geometric mean of the two spacings may
+    not exceed the uniform spacing (end - start) / (n_points - 1); past that the
+    cells would shrink toward the middle.
+    """
+
+    start: float
+    end: float
+    n_points: int
+    first_spacing: float
+    end_spacing: float
+    kind: Literal["vinokur"] = "vinokur"
+
+    def __post_init__(self) -> None:
+        """Validate the two end spacings against the length and the point count."""
+
+        _validate_interval(self.start, self.end, self.n_points)
+
+        # two spacings to set, and at least one cell between them
+        if self.n_points < 4:
+            raise ValueError("vinokur n_points must be at least 4")
+        if self.first_spacing <= 0.0 or self.end_spacing <= 0.0:
+            raise ValueError("vinokur first_spacing and end_spacing must be greater than zero")
+
+        # check: the two end cells fit, with room between them
+        length = self.end - self.start
+        if self.first_spacing + self.end_spacing >= length:
+            raise ValueError(
+                f"vinokur first_spacing + end_spacing = "
+                f"{self.first_spacing + self.end_spacing:.6g} must be smaller than the "
+                f"length {length:.6g}"
+            )
+
+        # check: the cells are finest at the ends (round-off allowance, so spacings set
+        # exactly at the limit pass)
+        uniform = length / (self.n_points - 1)
+        geometric_mean = (self.first_spacing * self.end_spacing) ** 0.5
+        if geometric_mean > uniform * (1.0 + 1.0e-12):
+            raise ValueError(
+                f"vinokur spacings too coarse for {self.n_points} points: "
+                f"sqrt(first_spacing x end_spacing) = {geometric_mean:.6g} exceeds the "
+                f"uniform spacing (end - start) / (n_points - 1) = {uniform:.6g}, so the "
+                "cells would shrink toward the middle; lower the spacings or n_points"
+            )
 
 
 # --------------------------------------------------
@@ -183,7 +235,9 @@ class SegmentedSpec:
                 raise ValueError("segmented regions must alternate between linear and polynomial")
 
 
-DistributionSpec: TypeAlias = EquidistantSpec | GeometricSpec | TanhSpec | SegmentedSpec
+DistributionSpec: TypeAlias = (
+    EquidistantSpec | GeometricSpec | TanhSpec | VinokurSpec | SegmentedSpec
+)
 
 
 # --------------------------------------------------

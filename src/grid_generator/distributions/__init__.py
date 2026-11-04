@@ -10,6 +10,7 @@ from grid_generator.distributions.models import (
     QuinticSegment,
     SegmentedSpec,
     TanhSpec,
+    VinokurSpec,
 )
 
 __all__ = [
@@ -21,5 +22,6 @@ __all__ = [
     "QuinticSegment",
     "SegmentedSpec",
     "TanhSpec",
+    "VinokurSpec",
     "build_distribution",
 ]

@@ -16,8 +16,8 @@ Create a starter configuration, edit it, and generate the grid:
 ```bash
 # initialize grid generator
 grid-generator plate init
-# run grid generator
-grid-generator plate run plate.toml
+# run grid generator (reads plate.toml, the file init writes)
+grid-generator plate run
 ```
 
 ## License

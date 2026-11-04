@@ -3,6 +3,10 @@
 The tables use the same distribution types and keys as the Cartesian axes, without
 start and end: those come from the geometry and [domain]. The body starts at the
 nose spacing, so the wall spacing is continuous across the nose/body junction.
+
+A shock-line grid builds its wall-normal points per line, from the line's own
+lengths: [points.shock_layer] from the wall to the shock, [points.freestream] from
+the shock to the outer boundary.
 """
 
 # --------------------------------------------------
@@ -16,7 +20,7 @@ import numpy as np
 from canonical_geometries import Profile2D
 from numpy.typing import ArrayLike, NDArray
 
-from grid_generator.distributions.models import DistributionSpec, GeometricSpec
+from grid_generator.distributions.models import DistributionSpec, GeometricSpec, VinokurSpec
 from grid_generator.distributions.parse import parse_distribution
 
 
@@ -234,8 +238,92 @@ def build_normal_spec(table: dict[str, Any], height: float) -> DistributionSpec:
                 f"{spec.first_spacing:.3g} m need a line longer than (n_points - 1) x "
                 f"first_spacing = {needed:.3g} m, but this one is {height:.3g} m, so the "
                 "cells would shrink away from the wall: lower n_points or first_spacing, "
-                "or lengthen the line ([domain] height, or [outer] min_offset)"
+                "or raise [domain] height"
             )
+
+    return spec
+
+
+def build_shock_layer_spec(
+    n_points: int, first_spacing: float, end_spacing_fraction: float, height: float
+) -> VinokurSpec:
+    """Points of one line from the wall (0) to the shock (height): two-sided stretching.
+
+    The spacing at the shock is end_spacing_fraction x height. The wall spacing is
+    first_spacing, lowered on a line too short for it: a two-sided stretching keeps
+    its cells finest at the ends only while sqrt(wall spacing x shock spacing) stays
+    within the uniform spacing h = height / (n_points - 1), so the wall spacing is
+    at most h^2 / (shock spacing).
+
+    Args:
+        n_points: Points from the wall to the shock, both included.
+        first_spacing: Wall spacing [m].
+        end_spacing_fraction: Spacing at the shock, as a fraction of height.
+        height: Wall-to-shock distance of this line [m].
+
+    Returns:
+        Distribution spec in wall distance [m].
+
+    Raises:
+        ValueError: If the line is too short to hold the two end cells.
+    """
+
+    # spacing at the shock: a fraction of this line's wall-to-shock distance
+    end_spacing = end_spacing_fraction * height
+
+    # wall spacing: the configured one, or the largest that fits on this line
+    uniform_spacing = height / (n_points - 1)
+    largest_wall_spacing = uniform_spacing**2 / end_spacing
+    wall_spacing = min(first_spacing, largest_wall_spacing)
+
+    # build, with the table name on every error
+    try:
+        spec = VinokurSpec(
+            start=0.0,
+            end=height,
+            n_points=n_points,
+            first_spacing=wall_spacing,
+            end_spacing=end_spacing,
+        )
+    except ValueError as error:
+        raise ValueError(f"[points.shock_layer] {error}") from None
+
+    return spec
+
+
+def build_freestream_spec(n_points: int, length: float, first_spacing: float) -> GeometricSpec:
+    """Points of one line from the shock (0) to the outer boundary (length): geometric growth.
+
+    Args:
+        n_points: Points from the shock to the outer boundary, both included.
+        length: Distance from the shock to the outer boundary along the line [m].
+        first_spacing: Spacing at the shock (the shock layer's last cell) [m].
+
+    Returns:
+        Distribution spec in distance from the shock [m].
+
+    Raises:
+        ValueError: If the cells would shrink toward the outer boundary.
+    """
+
+    # check: from the spacing at the shock the cells must grow (or stay) toward the
+    # outer boundary, as [points.normal] cells must away from the wall
+    label = "points.freestream"
+    needed = (n_points - 1) * first_spacing
+    if needed > length:
+        raise ValueError(
+            f"[{label}] {n_points} points from the spacing at the shock "
+            f"({first_spacing:.3g} m) need (n_points - 1) x that = {needed:.3g} m beyond "
+            f"the shock, but the outer boundary is {length:.3g} m away, so the cells "
+            "would shrink toward it: lower n_points, or raise [shock] margin_factor or "
+            "min_offset"
+        )
+
+    # build, with the table name on every error
+    try:
+        spec = GeometricSpec(start=0.0, end=length, n_points=n_points, first_spacing=first_spacing)
+    except ValueError as error:
+        raise ValueError(f"[{label}] {error}") from None
 
     return spec
 

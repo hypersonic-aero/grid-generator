@@ -140,6 +140,28 @@ strength = 3.0
 cluster = "start"
 """,
     ),
+    "vinokur": DistributionInfo(
+        summary="two-sided stretching: a given spacing at each end (Vinokur)",
+        keys=(
+            START,
+            END,
+            N_POINTS,
+            KeyInfo(name="first_spacing", description="spacing at start [m]", required=True),
+            KeyInfo(name="end_spacing", description="spacing at end [m]", required=True),
+        ),
+        example="""\
+type = "vinokur"
+start = 0.0
+end = 5.0e-3
+n_points = 101
+first_spacing = 1.0e-6
+end_spacing = 2.0e-5
+""",
+        notes=(
+            "the cells are finest at the ends: sqrt(first_spacing x end_spacing) may not "
+            "exceed the uniform spacing (end - start) / (n_points - 1)",
+        ),
+    ),
     "segmented": DistributionInfo(
         summary="equidistant regions joined by smooth polynomial transitions",
         keys=(
@@ -269,4 +291,9 @@ BODY_FITTED_RULES: tuple[str, ...] = (
     "[points.body] geometric: no first_spacing or ratio (the nose spacing is the first)",
     "[points.body] segmented: the first segment gives only its end (at the nose spacing)",
     "[points.body] segments: ends in x, spacings along the wall (rounded to whole cells)",
+    "[points.shock_layer] (shock-line grids, instead of [points.normal]): vinokur from "
+    "the wall to the shock, with end_spacing_fraction (of each line's wall-to-shock "
+    "distance) instead of end_spacing",
+    "[points.freestream] (shock-line grids): geometric from the shock to the outer "
+    "boundary, n_points only (it starts at the spacing at the shock)",
 )

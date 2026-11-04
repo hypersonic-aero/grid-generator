@@ -1,0 +1,48 @@
+# Golden grid: a frozen config whose grid must not change (tests/test_golden.py).
+# A deliberate change: rerun tests/golden/make_golden.py, and say why in the commit.
+# 7 deg cone, 2.5 mm nose radius, Mach 7, constant-height outer boundary
+#
+# body: 7 deg half-angle sphere-cone, 2.5 mm nose, ending at x = 1 m (unit length)
+# resolution: fine enough for a laminar boundary layer at Mach 7, Re = 2.4e6 /m:
+#   100 points on the nose, 1001 on the cone, 1000 wall-normal from 1e-6 m to 0.25 m
+# run: grid-generator cone run
+
+# Sphere-cone, axisymmetric about the x axis; the grid is the meridian plane.
+[geometry]
+type = "cone"
+# nose radius in [m]
+nose_radius = 2.5e-3
+# cone half-angle in [deg]
+half_angle = 7.0
+
+[domain]
+# end of the grid (and of the body) along x, measured from the nose tip in [m]
+x_end = 1.0
+# constant wall-normal height of the grid in [m]; clears the bow shock at x_end
+height = 0.25
+
+# along the wall, nose arc: equal angle steps
+[points.nose]
+n_points = 100
+
+# along the wall, cone: from the junction to x_end, starting at the nose spacing
+[points.body]
+type = "geometric"
+n_points = 1001
+
+# away from the wall: geometric growth from the first spacing to the height
+[points.normal]
+type = "geometric"
+n_points = 1000
+# first wall-normal spacing in [m]
+first_spacing = 1.0e-6
+
+[markers]
+wall = "wall"
+outer = "farfield"
+outflow = "outflow"
+symmetry = "symmetry"
+
+# The path is relative to this file; the extension picks the format (.su2, .h5, .msh, ...)
+[output]
+filename = "cone7_m7_rn2p5.h5"

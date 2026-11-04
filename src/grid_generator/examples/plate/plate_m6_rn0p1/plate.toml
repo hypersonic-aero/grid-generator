@@ -1,0 +1,77 @@
+# flat plate, 0.1 mm leading-edge radius, Mach 6, shock-line grid
+#
+# body: flat plate with a circular leading edge of 0.1 mm radius, ending at x = 50 mm
+# shock.csv: flow-theory shock-shape run, method billig, for Mach 6 (gamma = 1.4)
+#   on the same body
+# the shock is the grid line j = 160 on every line (shock layer: 161 points); near
+#   the leading edge the lines are too short for the 1 um wall spacing, which is
+#   lowered there (see "wall spacing lowered" in the run summary)
+# run: grid-generator plate run
+
+# Flat plate with a circular leading edge (upper half).
+[geometry]
+# geometry type
+type = "plate"
+# leading-edge (nose) radius [m]
+nose_radius = 1.0e-4
+
+# Extent of the grid along the body.
+[domain]
+# end of the grid (and of the plate) along x, measured from the leading edge [m]
+x_end = 0.05
+
+# Shock line: the shock curve is a grid line; the outer boundary lies
+# margin_factor x (the wall-to-shock distance) + min_offset from the wall.
+[shock]
+# shock curve: x, y columns (flow-theory shock-shape run with a .csv output)
+curve = "shock.csv"
+# factor on the wall-to-shock distance
+margin_factor = 1.5
+# distance added beyond the scaled shock distance [m]
+min_offset = 0.0
+
+# along the wall, nose arc: equal angle steps
+[points.nose]
+# points on the nose arc
+n_points = 81
+
+# along the wall, plate: from the junction to x_end, starting at the nose spacing
+[points.body]
+# distribution type
+type = "geometric"
+# points on the plate
+n_points = 201
+
+# from the wall to the shock: fine at the wall and again at the shock
+[points.shock_layer]
+# distribution type: a given spacing at both ends
+type = "vinokur"
+# points from the wall to the shock, both included
+n_points = 161
+# wall spacing [m]
+first_spacing = 1.0e-6
+# spacing at the shock, as a fraction of the wall-to-shock distance
+end_spacing_fraction = 0.01
+
+# from the shock to the outer boundary: growing from the spacing at the shock
+[points.freestream]
+# distribution type
+type = "geometric"
+# points from the shock to the outer boundary, both included
+n_points = 41
+
+# Boundary names in the grid file.
+[markers]
+# the body
+wall = "wall"
+# outer boundary
+outer = "farfield"
+# outflow plane at x_end
+outflow = "outflow"
+# stagnation line ahead of the leading edge
+symmetry = "symmetry"
+
+# The path is relative to this file; the extension picks the format (.su2, .h5, .msh, ...)
+[output]
+# grid file
+filename = "plate_m6_rn0p1.h5"

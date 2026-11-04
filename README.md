@@ -20,7 +20,7 @@ pip install grid-generator
 
 ```bash
 grid-generator cartesian init
-grid-generator cartesian run cartesian.toml
+grid-generator cartesian run
 ```
 
 The generated TOML file defines required `grid.x` and optional `grid.y` and
@@ -43,20 +43,33 @@ use the geometry definitions from
 
 ```bash
 grid-generator plate init
-grid-generator plate run plate.toml
+grid-generator plate run
+```
+
+`run` reads the file `init` writes (`plate.toml`); pass another one with `-c`.
+
+For a shock-line grid the bow shock is a grid line: the same index `j` on every
+wall-normal line, so a solution's captured shock stays in one row of cells.
+`init --shock` writes that layout; it reads the shock curve from a CSV file
+(e.g. `flow-theory shock-shape run` with a `.csv` output, or a shock taken from a
+CFD solution):
+
+```bash
+grid-generator cone init --shock
+grid-generator cone run
 ```
 
 ## Features
 
 - One-, two-, and three-dimensional Cartesian tensor-product grids
-- Constant-height body-fitted 2D grids with a polar nose block, SU2 boundary
-  markers, and a grid quality report
+- Body-fitted 2D grids with a polar nose block, SU2 boundary markers, and a grid
+  quality report: constant height, or shock-line grids whose bow shock is a grid line
 - Extrusion of plate and wedge grids in z into 3D grids
-- Equidistant, geometric, tanh, and segmented point distributions
+- Equidistant, geometric, tanh, two-sided (Vinokur), and segmented point distributions
 - `distribution info` reference of the distribution types and their keys, and
   `distribution init/run` for 1D point files (.dat, .csv, .txt)
 - Composable cubic and quintic transitions between equidistant regions
-- Focused `cartesian`, `plate`, `wedge`, `cone` and `tangent-ogive` CLI workflows, each with `init/run`
+- Focused `cartesian`, `plate`, `wedge`, `cone` and `tangent-ogive` CLI workflows, each with `init/run` (and `examples`)
 - HDF5 and SU2 output through `cfd-io`
 - Typed Python configuration and generation API
 

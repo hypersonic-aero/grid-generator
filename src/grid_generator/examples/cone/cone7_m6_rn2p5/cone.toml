@@ -1,8 +1,9 @@
-# 7 deg cone, 2.5 mm nose radius, Mach 6, shock-aligned outer boundary
+# 7 deg cone, 2.5 mm nose radius, Mach 6, shock-line grid
 #
 # body: 7 deg half-angle sphere-cone, 2.5 mm nose, ending at x = 0.5 m
 # shock.csv: flow-theory shock-shape run, method billig_blended, for Mach 6
 #   (gamma = 1.4) on the same body
+# the shock is the grid line j = 160 on every line (shock layer: 161 points)
 # run: grid-generator cone run
 
 # Sphere-cone, axisymmetric about the x axis; the grid is the meridian plane.
@@ -19,15 +20,15 @@ half_angle = 7.0
 # end of the grid (and of the body) along x, measured from the nose tip [m]
 x_end = 0.5
 
-# Shock-aligned outer boundary: the shock pushed out along its normal by
-# (margin_factor - 1) * (its distance from the wall) + min_offset.
-[outer]
+# Shock line: the shock curve is a grid line; the outer boundary lies
+# margin_factor x (the wall-to-shock distance) + min_offset from the wall.
+[shock]
 # shock curve: x, y columns (flow-theory shock-shape run with a .csv output)
-shock = "shock.csv"
-# factor on the shock's distance from the wall
-margin_factor = 1.2
+curve = "shock.csv"
+# factor on the wall-to-shock distance
+margin_factor = 1.5
 # distance added beyond the scaled shock distance [m]
-min_offset = 1.0e-3
+min_offset = 0.0
 
 # along the wall, nose arc: equal angle steps
 [points.nose]
@@ -41,20 +42,29 @@ type = "geometric"
 # points on the cone
 n_points = 401
 
-# away from the wall: geometric growth from the first spacing to each line's height
-[points.normal]
+# from the wall to the shock: fine at the wall and again at the shock
+[points.shock_layer]
+# distribution type: a given spacing at both ends
+type = "vinokur"
+# points from the wall to the shock, both included
+n_points = 161
+# wall spacing [m]
+first_spacing = 1.0e-6
+# spacing at the shock, as a fraction of the wall-to-shock distance
+end_spacing_fraction = 0.01
+
+# from the shock to the outer boundary: growing from the spacing at the shock
+[points.freestream]
 # distribution type
 type = "geometric"
-# points in the wall-normal direction
-n_points = 201
-# first wall-normal spacing [m]
-first_spacing = 1.0e-6
+# points from the shock to the outer boundary, both included
+n_points = 41
 
 # Boundary names in the grid file.
 [markers]
 # the body
 wall = "wall"
-# outer boundary (shock-aligned)
+# outer boundary
 outer = "farfield"
 # outflow plane at x_end
 outflow = "outflow"

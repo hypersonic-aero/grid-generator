@@ -16,6 +16,7 @@ from grid_generator.distributions import (
     QuinticSegment,
     SegmentedSpec,
     TanhSpec,
+    VinokurSpec,
     build_distribution,
 )
 
@@ -146,6 +147,67 @@ def test_tanh_clusters_where_requested(cluster: str) -> None:
 
 
 # --------------------------------------------------
+# vinokur
+# --------------------------------------------------
+@pytest.mark.parametrize(
+    ("start", "end", "n_points", "first_spacing", "end_spacing"),
+    [
+        # boundary layer at the wall, finer cells again at the end (a shock layer)
+        (0.0, 0.1, 161, 1.0e-6, 1.0e-3),
+        # the same, mirrored: fine at the end
+        (0.0, 0.1, 161, 1.0e-3, 1.0e-6),
+        # mild stretching, away from the origin
+        (2.0, 3.0, 41, 0.01, 0.02),
+        # equal spacings
+        (0.0, 1.0, 101, 1.0e-4, 1.0e-4),
+        # few points
+        (0.0, 1.0, 4, 0.1, 0.3),
+        # at the limit: sqrt(first_spacing x end_spacing) is the uniform spacing
+        (0.0, 1.0, 51, 0.02**2 / 0.05, 0.05),
+    ],
+)
+def test_vinokur_matches_both_end_spacings(
+    start: float, end: float, n_points: int, first_spacing: float, end_spacing: float
+) -> None:
+    """The first and last cell have the requested sizes, and the cells are finest at the ends."""
+
+    # build
+    spec = VinokurSpec(
+        start=start,
+        end=end,
+        n_points=n_points,
+        first_spacing=first_spacing,
+        end_spacing=end_spacing,
+    )
+    points = build_distribution(spec)
+    spacings = np.diff(points)
+
+    # check: end points and both end spacings
+    check_endpoints_and_count(points, start, end, n_points)
+    assert spacings[0] == pytest.approx(first_spacing, rel=1e-10)
+    assert spacings[-1] == pytest.approx(end_spacing, rel=1e-10)
+
+    # check: no cell inside is smaller than the smaller end cell
+    assert spacings.min() >= min(spacings[0], spacings[-1]) * (1.0 - 1e-9)
+
+
+def test_vinokur_with_equal_spacings_is_tanh_clustered_at_both_ends() -> None:
+    """With the same spacing at both ends, Vinokur's function is the symmetric tanh."""
+
+    # tanh clustered at both ends, and vinokur with its end spacing
+    tanh_points = build_distribution(
+        TanhSpec(start=0.0, end=1.0, n_points=81, strength=2.5, cluster="both")
+    )
+    spacing = float(tanh_points[1] - tanh_points[0])
+    vinokur_points = build_distribution(
+        VinokurSpec(start=0.0, end=1.0, n_points=81, first_spacing=spacing, end_spacing=spacing)
+    )
+
+    # check
+    np.testing.assert_allclose(vinokur_points, tanh_points, rtol=0.0, atol=1e-12)
+
+
+# --------------------------------------------------
 # segmented
 # --------------------------------------------------
 def test_segmented_linear_quintic_linear() -> None:
@@ -260,6 +322,36 @@ def test_non_monotonic_result_rejected() -> None:
         (
             lambda: TanhSpec(start=0.0, end=1.0, n_points=5, strength=1.0, cluster="middle"),
             "cluster",
+        ),
+        (
+            lambda: VinokurSpec(start=0.0, end=1.0, n_points=3, first_spacing=0.1, end_spacing=0.1),
+            "at least 4",
+        ),
+        (
+            lambda: VinokurSpec(
+                start=0.0, end=1.0, n_points=11, first_spacing=0.0, end_spacing=0.1
+            ),
+            "greater than zero",
+        ),
+        (
+            lambda: VinokurSpec(
+                start=0.0, end=1.0, n_points=11, first_spacing=0.6, end_spacing=0.5
+            ),
+            "smaller than the length",
+        ),
+        # both spacings larger than the uniform spacing 0.1
+        (
+            lambda: VinokurSpec(
+                start=0.0, end=1.0, n_points=11, first_spacing=0.12, end_spacing=0.15
+            ),
+            "shrink toward the middle",
+        ),
+        # one finer, one coarser, but their geometric mean above 0.1
+        (
+            lambda: VinokurSpec(
+                start=0.0, end=1.0, n_points=11, first_spacing=0.05, end_spacing=0.3
+            ),
+            "shrink toward the middle",
         ),
         (lambda: EquidistantSegment(end=1.0), "exactly one"),
         (lambda: EquidistantSegment(end=1.0, n_points=1), "at least 2"),

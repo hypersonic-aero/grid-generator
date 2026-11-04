@@ -46,6 +46,41 @@ class GridQuality:
         return text
 
 
+@dataclass(frozen=True, slots=True)
+class ShockLineQuality:
+    """Summary of the shock line (j = j_s) of a shock-line grid.
+
+    Attributes:
+        shock_line_j: Index j_s of the grid line on the shock.
+        shock_distance: Smallest and largest wall-to-shock distance over the lines [m].
+        spacing_below: Smallest and largest cell size just inside the shock
+            (j_s - 1 to j_s) [m].
+        spacing_above: Smallest and largest cell size just outside the shock
+            (j_s to j_s + 1) [m].
+        lowered_wall_spacing: Lines whose wall spacing is below the configured
+            first spacing (lines too short for it, near a small nose).
+    """
+
+    shock_line_j: int
+    shock_distance: tuple[float, float]
+    spacing_below: tuple[float, float]
+    spacing_above: tuple[float, float]
+    lowered_wall_spacing: int
+
+    def summary(self) -> str:
+        """Return the report as aligned text lines, for the CLI."""
+
+        lines = [
+            f"  shock line              j = {self.shock_line_j}",
+            f"  wall-to-shock distance  {_range_text(self.shock_distance)} m",
+            f"  spacing below the shock {_range_text(self.spacing_below)} m",
+            f"  spacing above the shock {_range_text(self.spacing_above)} m",
+            f"  wall spacing lowered    {self.lowered_wall_spacing} lines",
+        ]
+        text = "\n".join(lines)
+        return text
+
+
 # --------------------------------------------------
 # public API
 # --------------------------------------------------
@@ -99,6 +134,55 @@ def grid_quality(grid: StructuredGrid) -> GridQuality:
         max_spacing_ratio_i=ratio_i,
         max_spacing_ratio_j=ratio_j,
         max_wall_skew_deg=float(skew_deg.max()),
+    )
+    return report
+
+
+def shock_line_quality(
+    grid: StructuredGrid, shock_line_j: int, first_spacing: float
+) -> ShockLineQuality:
+    """Measure the shock line of a 2D shock-line grid: distances, spacings, lowered lines.
+
+    Args:
+        grid: Structured grid with shape (ni, nj, 1).
+        shock_line_j: Index j_s of the grid line on the shock.
+        first_spacing: Configured wall spacing ([points.shock_layer] first_spacing) [m].
+
+    Returns:
+        Shock-line report.
+
+    Raises:
+        ValueError: If the grid is not 2D, or j_s isn't an inner grid line.
+    """
+
+    # validate inputs
+    ni, nj, nk = grid.shape
+    if nk != 1 or not 0 < shock_line_j < nj - 1:
+        raise ValueError(
+            f"shock_line_quality needs a 2D grid with 0 < j_s < nj - 1, got shape "
+            f"{grid.shape} and j_s = {shock_line_j}"
+        )
+
+    # work on the (ni, nj) plane
+    x = grid.x[:, :, 0]
+    y = grid.y[:, :, 0]
+    j_s = shock_line_j
+
+    # wall-to-shock distance, and the cells either side of the shock line
+    shock_distance = np.hypot(x[:, j_s] - x[:, 0], y[:, j_s] - y[:, 0])
+    below = np.hypot(x[:, j_s] - x[:, j_s - 1], y[:, j_s] - y[:, j_s - 1])
+    above = np.hypot(x[:, j_s + 1] - x[:, j_s], y[:, j_s + 1] - y[:, j_s])
+
+    # lines whose wall spacing was lowered (allowance for the round-off of the stretching)
+    wall_spacing = np.hypot(x[:, 1] - x[:, 0], y[:, 1] - y[:, 0])
+    lowered = int(np.sum(wall_spacing < first_spacing * (1.0 - 1.0e-6)))
+
+    report = ShockLineQuality(
+        shock_line_j=j_s,
+        shock_distance=(float(shock_distance.min()), float(shock_distance.max())),
+        spacing_below=(float(below.min()), float(below.max())),
+        spacing_above=(float(above.min()), float(above.max())),
+        lowered_wall_spacing=lowered,
     )
     return report
 
@@ -159,6 +243,15 @@ def _cell_areas(x: NDArray[np.float64], y: NDArray[np.float64]) -> NDArray[np.fl
     areas = 0.5 * twice_area
 
     return areas
+
+
+def _range_text(bounds: tuple[float, float]) -> str:
+    """Smallest and largest value as "a to b"."""
+
+    # format
+    text = f"{bounds[0]:.3e} to {bounds[1]:.3e}"
+
+    return text
 
 
 def _max_neighbour_ratio(lengths: NDArray[np.float64], axis: int) -> float:

@@ -11,9 +11,11 @@ from grid_generator.distributions.models import (
     GeometricSpec,
     SegmentedSpec,
     TanhSpec,
+    VinokurSpec,
 )
 from grid_generator.distributions.segmented import build_segmented
 from grid_generator.distributions.tanh import build_tanh
+from grid_generator.distributions.vinokur import build_vinokur
 
 
 def build_distribution(spec: DistributionSpec) -> NDArray[np.float64]:
@@ -25,6 +27,8 @@ def build_distribution(spec: DistributionSpec) -> NDArray[np.float64]:
         coordinates = build_geometric(spec)
     elif isinstance(spec, TanhSpec):
         coordinates = build_tanh(spec)
+    elif isinstance(spec, VinokurSpec):
+        coordinates = build_vinokur(spec)
     elif isinstance(spec, SegmentedSpec):
         coordinates = build_segmented(spec)
     else:

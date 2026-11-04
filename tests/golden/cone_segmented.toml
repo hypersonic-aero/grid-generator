@@ -1,0 +1,84 @@
+# Golden grid: a frozen config whose grid must not change (tests/test_golden.py).
+# A deliberate change: rerun tests/golden/make_golden.py, and say why in the commit.
+
+# Sphere-cone, axisymmetric about the x axis, same contract as canonical-geometries
+# (geometry cone init) without length: the cone ends at [domain] x_end.
+# The grid is the meridian plane: run the solver axisymmetric.
+# The nose arc runs to 90 deg - half_angle, tangent to the cone.
+# Stagnation point at the origin, x along the axis, y radial.
+[geometry]
+# type marker
+type = "cone"
+# nose radius in [m]
+nose_radius = 100.0e-6
+# cone half-angle in [deg]
+half_angle = 7.0
+
+# Extent of the grid.
+[domain]
+# end of the grid (and of the body) along x, measured from nose tip in [m]
+x_end = 0.01
+# constant wall-normal height of the grid in [m]; must clear the bow shock at x_end
+height = 5.0e-3
+
+# Point distributions: the same types and keys as the Cartesian axes, without start
+# and end (the geometry and [domain] fix them). Wall points: nose + body - 1 (nose
+# and body share the junction).
+
+# along the wall, nose arc: equal angle steps (a polar block around the nose)
+[points.nose]
+# points on the nose arc
+n_points = 81
+
+# along the wall, body: from the junction to x_end, in regions. Segment ends in x [m];
+# spacings along the wall [m], rounded to whole cells. The first region keeps the
+# nose spacing (its end moves to a whole number of nose spacings), so the wall spacing
+# is continuous across the junction; the last region ends at x_end.
+[points.body]
+type = "segmented"
+
+# fine: the nose spacing up to x = 0.2 mm
+[[points.body.segments]]
+type = "equidistant"
+end = 0.2e-3
+
+# transition: the spacing changes smoothly (quintic) up to x = 2 mm
+[[points.body.segments]]
+type = "quintic"
+end = 2.0e-3
+n_points = 81
+
+# coarse: 50 micron spacing up to x_end
+[[points.body.segments]]
+type = "equidistant"
+spacing = 50.0e-6
+
+# away from the wall: from the wall to [domain] height, geometric growth
+[points.normal]
+type = "geometric"
+# points in the wall-normal direction
+n_points = 101
+# first wall-normal spacing in [m]
+first_spacing = 1.0e-6
+# optional: stop growing at this spacing in [m], uniform from there to the height
+# max_spacing = 1.0e-4
+
+# Boundary names in the grid file; the solver input assigns the boundary conditions to
+# them. Two sides may share a name.
+[markers]
+# the body
+wall = "wall"
+# outer boundary
+outer = "farfield"
+# outflow plane at x_end
+outflow = "outflow"
+# stagnation line ahead of the nose (on the axis for axisymmetric bodies)
+symmetry = "symmetry"
+
+# The path is relative to this file.
+[output]
+# grid file; the extension picks the format via cfd-io (.su2, .h5, .p2dfmt, .msh, ...)
+filename = "cone_local.su2"
+# element order, for .msh only: 1 (straight-edged quads) or 2 (curved 9-node quads
+# for high-order solvers; needs odd point counts in [points.nose], [points.body], [points.normal])
+order = 1

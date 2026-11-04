@@ -25,9 +25,10 @@ from grid_generator.distributions import (
     QuinticSegment,
     SegmentedSpec,
     TanhSpec,
+    VinokurSpec,
     build_distribution,
 )
-from grid_generator.quality import GridQuality, grid_quality
+from grid_generator.quality import GridQuality, ShockLineQuality, grid_quality, shock_line_quality
 
 # --------------------------------------------------
 # resolve package version
@@ -49,7 +50,9 @@ __all__ = [
     "GridQuality",
     "QuinticSegment",
     "SegmentedSpec",
+    "ShockLineQuality",
     "TanhSpec",
+    "VinokurSpec",
     "__version__",
     "build_distribution",
     "generate_body_fitted",
@@ -57,4 +60,5 @@ __all__ = [
     "grid_quality",
     "load_body_fitted_config",
     "load_cartesian_config",
+    "shock_line_quality",
 ]
