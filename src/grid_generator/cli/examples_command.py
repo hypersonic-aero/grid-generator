@@ -112,9 +112,7 @@ def copy_example(
     destination = Path(destination)
     existing = [item.name for item in items if (destination / item.name).exists()]
     if existing and not force:
-        raise FileExistsError(
-            f"would overwrite {', '.join(existing)} (use --force to overwrite)"
-        )
+        raise FileExistsError(f"would overwrite {', '.join(existing)} (use --force to overwrite)")
 
     # copy every file of the example folder
     destination.mkdir(parents=True, exist_ok=True)
@@ -140,7 +138,9 @@ def build_examples_command(geometry_type: str) -> Callable[..., None]:
     def cmd_examples(
         name: Annotated[
             str | None,
-            typer.Argument(help="Example to copy into the current folder. Omit to list the examples."),
+            typer.Argument(
+                help="Example to copy into the current folder. Omit to list the examples."
+            ),
         ] = None,
         force: Annotated[
             bool,

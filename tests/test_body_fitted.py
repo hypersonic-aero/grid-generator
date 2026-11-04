@@ -29,6 +29,7 @@ from grid_generator.config import (
 )
 from grid_generator.config.points import arc_length_at_x
 from grid_generator.distributions import build_distribution
+from grid_generator.quality import folded_cells
 
 runner = CliRunner()
 
@@ -213,6 +214,63 @@ def test_all_cells_valid_and_counter_clockwise(config_name: str, request) -> Non
     # check
     assert quality.min_cell_area > 0.0
     assert quality.max_spacing_ratio_j < 1.1
+
+
+# corners (i, j) of one unit cell: i along x, j along y (counter-clockwise)
+UNIT_CELL_X = [[0.0, 0.0], [1.0, 1.0]]
+UNIT_CELL_Y = [[0.0, 1.0], [0.0, 1.0]]
+
+
+@pytest.mark.parametrize(
+    ("cell_x", "cell_y", "expected"),
+    [
+        (UNIT_CELL_X, UNIT_CELL_Y, False),
+        # twisted: the corners at i + 1 swapped (a bow-tie)
+        (UNIT_CELL_X, [[0.0, 1.0], [1.0, 0.0]], True),
+        # collapsed: both i-lines at x = 0
+        ([[0.0, 0.0], [0.0, 0.0]], UNIT_CELL_Y, True),
+        # mirrored: clockwise in (i, j)
+        ([[1.0, 1.0], [0.0, 0.0]], UNIT_CELL_Y, True),
+        # a corner that isn't a number
+        ([[0.0, 0.0], [1.0, float("nan")]], UNIT_CELL_Y, True),
+    ],
+)
+def test_folded_cells_marks_twisted_collapsed_and_nan_cells(
+    cell_x: list, cell_y: list, expected: bool
+) -> None:
+    """Only a cell that turns counter-clockwise at all four corners counts as valid."""
+
+    # check
+    folded = folded_cells(np.array(cell_x), np.array(cell_y))
+    assert folded.shape == (1, 1)
+    assert bool(folded[0, 0]) is expected
+
+
+def test_cli_run_refuses_a_folded_grid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A grid with crossing lines is an error (exit 1), and no file is written."""
+
+    # grid lines with the second wall point pushed past the third: two i-lines cross
+    import grid_generator.body_fitted as body_fitted
+
+    build_lines = body_fitted.build_grid_lines
+
+    def crossing_lines(*arguments):
+        x_plane, y_plane = build_lines(*arguments)
+        x_plane[1, :] = x_plane[2, :] + 1.0e-3
+        return x_plane, y_plane
+
+    monkeypatch.setattr(body_fitted, "build_grid_lines", crossing_lines)
+
+    # init and run
+    config_path = tmp_path / "plate.toml"
+    runner.invoke(app, ["plate", "init", "--output", str(config_path)])
+    result = runner.invoke(app, ["plate", "run", "-c", str(config_path)])
+
+    # check: one error line, nothing written
+    assert result.exit_code == 1
+    assert "error: " in result.output
+    assert "folded or collapsed cells between i = 1 and 2" in result.output
+    assert not (tmp_path / "plate_local.su2").exists()
 
 
 # --------------------------------------------------
@@ -419,6 +477,11 @@ def test_normal_takes_other_distributions(tmp_path: Path, old: str, new: str) ->
             (("first_spacing = 1.0e-6\n", "first_spacing = 1.0e-6\nstart = 0.0\n"),),
             r"\[points.normal\] don't set start",
         ),
+        # a first spacing too large for the height: the cells would shrink
+        (
+            (("first_spacing = 1.0e-6\n", "first_spacing = 1.0e-4\n"),),
+            "cells would shrink away from the wall",
+        ),
         (
             (
                 (
@@ -575,7 +638,7 @@ def test_cli_init_options_write_runnable_configs(
     config_path = tmp_path / f"{geometry_type}.toml"
     options = ["--body", body, "--normal", normal]
     result_init = runner.invoke(app, [geometry_type, "init", "-o", str(config_path), *options])
-    result_run = runner.invoke(app, [geometry_type, "run", str(config_path)])
+    result_run = runner.invoke(app, [geometry_type, "run", "-c", str(config_path)])
 
     # check
     assert result_init.exit_code == 0, result_init.output
@@ -592,7 +655,7 @@ def test_cli_init_span_writes_a_3d_config(tmp_path: Path, geometry_type: str) ->
     # init with --span, then run
     config_path = tmp_path / f"{geometry_type}.toml"
     runner.invoke(app, [geometry_type, "init", "-o", str(config_path), "--span"])
-    result = runner.invoke(app, [geometry_type, "run", str(config_path)])
+    result = runner.invoke(app, [geometry_type, "run", "-c", str(config_path)])
 
     # check
     assert result.exit_code == 0, result.output
@@ -665,7 +728,7 @@ def test_markers_rename_the_sides_in_the_su2_file(tmp_path: Path) -> None:
     )
     config_path = write_template(tmp_path, replacements=replacements)
     dataset = generate_body_fitted(config_path)
-    result = runner.invoke(app, ["plate", "run", str(config_path)])
+    result = runner.invoke(app, ["plate", "run", "-c", str(config_path)])
 
     # check the dataset
     assert result.exit_code == 0, result.output
@@ -817,7 +880,7 @@ def test_cli_init_then_run_writes_su2(tmp_path: Path) -> None:
     # init and run
     config_path = tmp_path / "plate.toml"
     result_init = runner.invoke(app, ["plate", "init", "--output", str(config_path)])
-    result_run = runner.invoke(app, ["plate", "run", str(config_path)])
+    result_run = runner.invoke(app, ["plate", "run", "-c", str(config_path)])
 
     # check the commands and the report
     assert result_init.exit_code == 0, result_init.output
@@ -841,7 +904,7 @@ def test_cli_init_then_run_other_geometries(tmp_path: Path, geometry_type: str) 
     # init and run with the default config name, inside tmp_path
     config_path = tmp_path / f"{geometry_type}.toml"
     result_init = runner.invoke(app, [geometry_type, "init", "--output", str(config_path)])
-    result_run = runner.invoke(app, [geometry_type, "run", str(config_path)])
+    result_run = runner.invoke(app, [geometry_type, "run", "-c", str(config_path)])
 
     # check the commands, the template's type and the output file
     assert result_init.exit_code == 0, result_init.output
@@ -856,7 +919,7 @@ def test_cli_run_rejects_a_config_for_another_geometry(tmp_path: Path) -> None:
 
     # plate config, cone command
     config_path = write_config(tmp_path)
-    result = runner.invoke(app, ["cone", "run", str(config_path)])
+    result = runner.invoke(app, ["cone", "run", "-c", str(config_path)])
 
     # check: error points at the plate command, nothing written
     assert result.exit_code == 1
@@ -869,7 +932,7 @@ def test_cli_span_writes_3d_su2_with_positive_volumes(tmp_path: Path) -> None:
 
     # run
     config_path = write_span_config(tmp_path)
-    result = runner.invoke(app, ["plate", "run", str(config_path)])
+    result = runner.invoke(app, ["plate", "run", "-c", str(config_path)])
     assert result.exit_code == 0, result.output
     assert "201 x 101 x 5 points (200 x 100 x 4 cells)" in result.output
 
@@ -913,7 +976,7 @@ def test_cli_su2_reads_back_with_the_same_points(tmp_path: Path) -> None:
     # init and run
     config_path = tmp_path / "plate.toml"
     runner.invoke(app, ["plate", "init", "--output", str(config_path)])
-    runner.invoke(app, ["plate", "run", str(config_path)])
+    runner.invoke(app, ["plate", "run", "-c", str(config_path)])
 
     # read back and compare point clouds (SU2 is unstructured, so compare sorted coordinates)
     expected = generate_body_fitted(config_path).grid
@@ -930,7 +993,7 @@ def test_cli_hdf5_keeps_points_and_markers(tmp_path: Path) -> None:
 
     # config writing HDF5 instead of SU2
     config_path = write_config(tmp_path, "plate_local.su2", "plate_local.h5")
-    result = runner.invoke(app, ["plate", "run", str(config_path)])
+    result = runner.invoke(app, ["plate", "run", "-c", str(config_path)])
     assert result.exit_code == 0, result.output
 
     # read back
@@ -953,7 +1016,7 @@ def test_cli_msh_has_the_element_order(
 
     # config writing Gmsh at the given order
     config_path = write_order_2_config(tmp_path, "order = 2", f"order = {order}")
-    result = runner.invoke(app, ["plate", "run", str(config_path)])
+    result = runner.invoke(app, ["plate", "run", "-c", str(config_path)])
     assert result.exit_code == 0, result.output
 
     # element block headers: "dimension entity type count"
@@ -977,7 +1040,7 @@ def test_cli_run_reports_errors_cleanly(tmp_path: Path) -> None:
 
     # config with x_end inside the nose
     config_path = write_config(tmp_path, "x_end = 0.01", "x_end = 50.0e-6")
-    result = runner.invoke(app, ["plate", "run", str(config_path)])
+    result = runner.invoke(app, ["plate", "run", "-c", str(config_path)])
 
     # check
     assert result.exit_code == 1

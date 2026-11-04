@@ -16,7 +16,7 @@ import numpy as np
 from canonical_geometries import Profile2D
 from numpy.typing import ArrayLike, NDArray
 
-from grid_generator.distributions.models import DistributionSpec
+from grid_generator.distributions.models import DistributionSpec, GeometricSpec
 from grid_generator.distributions.parse import parse_distribution
 
 
@@ -201,7 +201,8 @@ def build_normal_spec(table: dict[str, Any], height: float) -> DistributionSpec:
         Distribution spec in wall distance [m].
 
     Raises:
-        ValueError: If the table is invalid or sets start or end.
+        ValueError: If the table is invalid or sets start or end, or a geometric
+            first_spacing doesn't fit the height (the cells would shrink).
     """
 
     # validate inputs: start and end come from [domain]
@@ -221,6 +222,20 @@ def build_normal_spec(table: dict[str, Any], height: float) -> DistributionSpec:
 
     # parse
     spec = parse_table(raw, label)
+
+    # check: from a fixed first spacing the cells must grow away from the wall; on a
+    # line shorter than (n_points - 1) x first_spacing a geometric distribution would
+    # shrink them instead, down to vanishing cells at the outer end
+    if isinstance(spec, GeometricSpec) and spec.first_spacing is not None:
+        needed = (spec.n_points - 1) * spec.first_spacing
+        if needed > height:
+            raise ValueError(
+                f"[{label}] {spec.n_points} points from first_spacing = "
+                f"{spec.first_spacing:.3g} m need a line longer than (n_points - 1) x "
+                f"first_spacing = {needed:.3g} m, but this one is {height:.3g} m, so the "
+                "cells would shrink away from the wall: lower n_points or first_spacing, "
+                "or lengthen the line ([domain] height, or [outer] min_offset)"
+            )
 
     return spec
 

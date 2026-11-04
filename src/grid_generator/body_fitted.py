@@ -47,6 +47,7 @@ from grid_generator.config.body_fitted import (
 )
 from grid_generator.distributions import DistributionSpec, EquidistantSpec, build_distribution
 from grid_generator.outer import outer_points, read_shock_curve
+from grid_generator.quality import folded_cells
 
 # --------------------------------------------------
 # constants
@@ -84,6 +85,10 @@ def generate_body_fitted(source: BodyFittedConfig | str | Path) -> Dataset:
     Returns:
         Grid-only CFD dataset with shape (ni, nj, 1), or (ni, nj, nk) when extruded, in
         cfd-io's convention, with the boundary markers SU2 output needs.
+
+    Raises:
+        ValueError: If the grid lines can't be built, or cross each other (folded or
+            collapsed cells).
     """
 
     # load configuration when the caller supplied a file path
@@ -104,6 +109,18 @@ def generate_body_fitted(source: BodyFittedConfig | str | Path) -> Dataset:
 
     # j-lines from the wall out to the outer boundary: (ni, nj)
     x_plane, y_plane = build_grid_lines(config, x_wall, y_wall, nx, ny)
+
+    # check: no folded, collapsed or NaN cells, so a broken grid is never written
+    folded = folded_cells(x_plane, y_plane)
+    if np.any(folded):
+        bad_i = np.nonzero(np.any(folded, axis=1))[0]
+        first_i = int(bad_i[0])
+        last_i = int(bad_i[-1]) + 1
+        raise ValueError(
+            f"{int(folded.sum())} folded or collapsed cells between i = {first_i} and "
+            f"{last_i} (wall x = {x_wall[first_i]:.4g} to {x_wall[last_i]:.4g} m); "
+            "the grid lines cross there: check the shock curve or the height"
+        )
 
     # span: the z-planes to extrude to, or the single plane z = 0 for a 2D grid
     if config.span is not None:
@@ -208,7 +225,7 @@ def build_grid_lines(
             n_line = build_distribution(config.normal_distribution(float(height)))
         except ValueError as error:
             raise ValueError(
-                f"[points.normal] at a line height of {height:.4g} m: {error}"
+                f"on the grid line at wall x = {x_wall[i]:.4g} m (height {height:.4g} m): {error}"
             ) from None
 
         # the shift grows quadratically, so the line leaves the wall along the normal

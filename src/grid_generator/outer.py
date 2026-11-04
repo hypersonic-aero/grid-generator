@@ -8,6 +8,9 @@ three steps:
    normal by (margin_factor - 1) * d + min_offset, with d its distance from the
    wall. Offsetting a convex curve outward keeps it as smooth as the shock, so
    the outer boundary has no corners (e.g. where the nose meets the body).
+   The normal is averaged along the shock over that same distance, so wiggles
+   smaller than the margin (e.g. noise in a shock taken from a CFD solution)
+   can't fold the outer curve.
 2. Outer points: each wall normal's crossing with the outer curve, then the
    spacing between neighbouring crossings is smoothed (in log scale, over a few
    points), so it has no jumps either. The first (on the axis) and the last (the
@@ -54,7 +57,8 @@ def read_shock_curve(path: str | Path) -> tuple[NDArray[np.float64], NDArray[np.
 
     Raises:
         OSError: If the file can't be read.
-        ValueError: If it doesn't hold at least two (x, y) points.
+        ValueError: If it doesn't hold at least two distinct (x, y) points, or holds a
+            value that isn't finite.
     """
 
     # convert to Path object
@@ -65,10 +69,22 @@ def read_shock_curve(path: str | Path) -> tuple[NDArray[np.float64], NDArray[np.
     if values.shape[1] < 2 or values.shape[0] < 2:
         raise ValueError(f"{path}: expected x, y columns with at least two points")
 
+    # check: every x and y is a number
+    if not np.all(np.isfinite(values[:, :2])):
+        raise ValueError(f"{path}: the shock curve holds values that aren't finite (nan, inf)")
+
     # order from the vertex outward
-    order = np.argsort(values[:, 1])
+    order = np.argsort(values[:, 1], kind="stable")
     shock_x = values[order, 0]
     shock_y = values[order, 1]
+
+    # drop repeated points (a curve taken from a CFD solution can repeat one)
+    repeated = (np.diff(shock_x) == 0.0) & (np.diff(shock_y) == 0.0)
+    keep = np.concatenate([[True], ~repeated])
+    shock_x = shock_x[keep]
+    shock_y = shock_y[keep]
+    if shock_x.size < 2:
+        raise ValueError(f"{path}: expected at least two distinct shock points")
 
     return shock_x, shock_y
 
@@ -142,26 +158,18 @@ def offset_shock(
         Outer curve x and y [m], from the axis outward.
     """
 
-    # unit tangent of the shock, from the vertex outward
-    tangent_x = np.gradient(shock_x)
-    tangent_y = np.gradient(shock_y)
-    length = np.hypot(tangent_x, tangent_y)
-    tangent_x = tangent_x / length
-    tangent_y = tangent_y / length
-
-    # outward normal: the tangent turned to the side away from the body (upstream at the vertex)
-    normal_x = -tangent_y
-    normal_y = tangent_x
-
-    # the vertex lies on the axis: its normal points straight upstream
-    normal_x[0] = -1.0
-    normal_y[0] = 0.0
-
     # distance of each shock point from the wall
     distance = _distance_to_polyline(shock_x, shock_y, x_wall, y_wall)
 
-    # push out by the margin beyond the shock
+    # how far each point is pushed out: the margin beyond the shock
     offset = (margin_factor - 1.0) * distance + min_offset
+
+    # outward normals, averaged along the shock over the offset distance: a wiggle
+    # smaller than the margin (e.g. grid-scale noise in a shock taken from a CFD
+    # solution) would otherwise tilt the normal and fold the pushed-out curve
+    normal_x, normal_y = _smoothed_normals(shock_x, shock_y, offset)
+
+    # push out by the margin beyond the shock
     curve_x = shock_x + offset * normal_x
     curve_y = shock_y + offset * normal_y
 
@@ -283,6 +291,67 @@ def _cumulative_arc_length(x: NDArray[np.float64], y: NDArray[np.float64]) -> ND
     arc = np.concatenate([[0.0], np.cumsum(segment_lengths)])
 
     return arc
+
+
+def _smoothed_normals(
+    x: NDArray[np.float64],
+    y: NDArray[np.float64],
+    width: NDArray[np.float64],
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Unit outward normals of a curve, averaged along it with Gaussian weights.
+
+    The curve runs from the axis outward and is mirrored about y = 0, so the
+    average at the vertex is symmetric and points straight upstream. Each segment
+    counts with its length, so clustered points don't weigh more.
+
+    Args:
+        x: Curve x [m], from the axis outward.
+        y: Curve y [m].
+        width: Width (standard deviation) of the average at each point [m]; never
+            narrower than the point spacing there.
+
+    Returns:
+        Normals x and y components, one per point.
+    """
+
+    # segments: length and arc length of their midpoints (repeated points carry no weight)
+    edge_x = np.diff(x)
+    edge_y = np.diff(y)
+    edge_length = np.hypot(edge_x, edge_y)
+    keep = edge_length > 0.0
+    arc = _cumulative_arc_length(x, y)
+    edge_arc = 0.5 * (arc[:-1] + arc[1:])
+
+    # outward normal of each segment: its direction turned away from the body
+    edge_normal_x = -edge_y[keep] / edge_length[keep]
+    edge_normal_y = edge_x[keep] / edge_length[keep]
+
+    # mirror about y = 0: the mirrored segments sit at negative arc length, their
+    # normals flipped in y
+    all_arc = np.concatenate([-edge_arc[keep], edge_arc[keep]])
+    all_length = np.concatenate([edge_length[keep], edge_length[keep]])
+    all_normal_x = np.concatenate([edge_normal_x, edge_normal_x])
+    all_normal_y = np.concatenate([-edge_normal_y, edge_normal_y])
+
+    # floor on the width: the mean length of the segments next to each point
+    spacing = np.empty(x.size)
+    spacing[0] = edge_length[0]
+    spacing[-1] = edge_length[-1]
+    spacing[1:-1] = 0.5 * (edge_length[:-1] + edge_length[1:])
+    width = np.maximum(width, spacing)
+
+    # average at each point: Gaussian weight in arc length, times segment length
+    normal_x = np.empty(x.size)
+    normal_y = np.empty(x.size)
+    for k in range(x.size):
+        weight = all_length * np.exp(-0.5 * ((all_arc - arc[k]) / width[k]) ** 2)
+        sum_x = np.sum(weight * all_normal_x)
+        sum_y = np.sum(weight * all_normal_y)
+        norm = np.hypot(sum_x, sum_y)
+        normal_x[k] = sum_x / norm
+        normal_y[k] = sum_y / norm
+
+    return normal_x, normal_y
 
 
 def _distance_to_polyline(

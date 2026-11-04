@@ -179,7 +179,7 @@ def test_cli_init_then_run_writes_a_readable_grid(tmp_path: Path) -> None:
     # init and run
     config_path = tmp_path / "cartesian.toml"
     result_init = runner.invoke(app, ["cartesian", "init", "--output", str(config_path)])
-    result_run = runner.invoke(app, ["cartesian", "run", str(config_path)])
+    result_run = runner.invoke(app, ["cartesian", "run", "-c", str(config_path)])
 
     # check the commands
     assert result_init.exit_code == 0, result_init.output
@@ -202,7 +202,7 @@ def test_cli_init_dims_sets_the_axes(tmp_path: Path, dims: int, dimensionality: 
     result_init = runner.invoke(
         app, ["cartesian", "init", "--output", str(config_path), "--dims", str(dims)]
     )
-    result_run = runner.invoke(app, ["cartesian", "run", str(config_path)])
+    result_run = runner.invoke(app, ["cartesian", "run", "-c", str(config_path)])
 
     # check
     assert result_init.exit_code == 0, result_init.output

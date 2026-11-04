@@ -103,6 +103,43 @@ def grid_quality(grid: StructuredGrid) -> GridQuality:
     return report
 
 
+def folded_cells(x: NDArray[np.float64], y: NDArray[np.float64]) -> NDArray[np.bool_]:
+    """Mark the cells of a 2D plane that are folded, collapsed or not finite.
+
+    A valid cell turns counter-clockwise in (i, j) at all four corners: the cross
+    product of the two edges meeting at each corner is positive. A positive area
+    alone isn't enough, since a twisted (bow-tie) cell can still have one.
+
+    Args:
+        x: Grid x [m], shape (ni, nj).
+        y: Grid y [m], shape (ni, nj).
+
+    Returns:
+        True for every bad cell, shape (ni - 1, nj - 1).
+    """
+
+    # corners of each cell, counter-clockwise: (i,j), (i+1,j), (i+1,j+1), (i,j+1)
+    corners_x = [x[:-1, :-1], x[1:, :-1], x[1:, 1:], x[:-1, 1:]]
+    corners_y = [y[:-1, :-1], y[1:, :-1], y[1:, 1:], y[:-1, 1:]]
+
+    # at each corner: cross product of the edge to the next corner and the edge
+    # to the previous one; NaN compares as not positive, so it's caught too
+    valid = np.ones(x[:-1, :-1].shape, dtype=bool)
+    for corner in range(4):
+        following = (corner + 1) % 4
+        preceding = (corner - 1) % 4
+        next_x = corners_x[following] - corners_x[corner]
+        next_y = corners_y[following] - corners_y[corner]
+        prev_x = corners_x[preceding] - corners_x[corner]
+        prev_y = corners_y[preceding] - corners_y[corner]
+        cross = next_x * prev_y - next_y * prev_x
+        valid = valid & (cross > 0.0)
+
+    folded = ~valid
+
+    return folded
+
+
 # --------------------------------------------------
 # private helpers
 # --------------------------------------------------

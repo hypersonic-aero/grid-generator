@@ -240,7 +240,7 @@ def test_cli_init_then_run_every_type(tmp_path: Path, kind: str) -> None:
     result_init = runner.invoke(
         app, ["distribution", "init", "-o", str(config_path), "--type", kind]
     )
-    result_run = runner.invoke(app, ["distribution", "run", str(config_path)])
+    result_run = runner.invoke(app, ["distribution", "run", "-c", str(config_path)])
 
     # check the commands
     assert result_init.exit_code == 0, result_init.output
@@ -288,7 +288,7 @@ def test_cli_run_rejects_bad_config(tmp_path: Path, old: str, new: str, message:
     config_path.write_text(config_text.replace(old, new, 1))
 
     # run
-    result = runner.invoke(app, ["distribution", "run", str(config_path)])
+    result = runner.invoke(app, ["distribution", "run", "-c", str(config_path)])
 
     # check
     assert result.exit_code == 1

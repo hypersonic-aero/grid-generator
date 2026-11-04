@@ -183,6 +183,70 @@ def test_stagnation_line_ends_ahead_of_the_shock_vertex(tmp_path: Path) -> None:
     assert grid.y[0, -1, 0] == pytest.approx(0.0, abs=1.0e-12)
 
 
+def test_noise_in_the_shock_curve_does_not_fold_the_grid(tmp_path: Path) -> None:
+    """A sub-micron dent near the vertex, like grid-scale noise in a CFD shock, is harmless.
+
+    Close to the vertex the shock is nearly vertical, so a 0.5 um dent makes x run
+    backwards for a few points; pushed out along the raw normals by about 1.5 mm,
+    the curve folded the grid there.
+    """
+
+    # the clean shock and its outer boundary
+    clean_folder = tmp_path / "clean"
+    clean_folder.mkdir()
+    shock_x, shock_y = write_shock(clean_folder / "shock.csv", 2.0 * X_END)
+    clean = generate_body_fitted(load_body_fitted_config(write_config(clean_folder))).grid
+
+    # the same shock, sampled every micron near the vertex and dented toward the body
+    fine_y = np.arange(0.0, 1.0e-3, 1.0e-6)
+    fine_x = np.interp(fine_y, shock_y, shock_x)
+    fine_x = fine_x + 5.0e-7 * np.exp(-(((fine_y - 3.0e-5) / 5.0e-6) ** 2))
+    coarse = shock_y >= 1.0e-3
+    noisy_x = np.concatenate([fine_x, shock_x[coarse]])
+    noisy_y = np.concatenate([fine_y, shock_y[coarse]])
+    assert np.any(np.diff(noisy_x) < 0.0)
+
+    # repeat a few points, as a CFD extraction can
+    noisy_x = np.repeat(noisy_x, 2)[:-1]
+    noisy_y = np.repeat(noisy_y, 2)[:-1]
+
+    # generate from the noisy shock (a folded grid would raise here)
+    noisy_folder = tmp_path / "noisy"
+    noisy_folder.mkdir()
+    np.savetxt(
+        noisy_folder / "shock.csv",
+        np.column_stack([noisy_x, noisy_y]),
+        delimiter=",",
+        header="x,y",
+        comments="",
+    )
+    noisy = generate_body_fitted(load_body_fitted_config(write_config(noisy_folder))).grid
+
+    # check: the outer boundary barely moves
+    shift = np.hypot(noisy.x[:, -1, 0] - clean.x[:, -1, 0], noisy.y[:, -1, 0] - clean.y[:, -1, 0])
+    assert shift.max() < 1.0e-6
+
+
+def test_a_shock_curve_with_missing_values_is_rejected(tmp_path: Path) -> None:
+    """nan or inf in the shock curve fails with a clear message."""
+
+    # a shock with one value missing
+    shock_x, shock_y = write_shock(tmp_path / "shock.csv", 2.0 * X_END)
+    shock_x[10] = np.nan
+    np.savetxt(
+        tmp_path / "shock.csv",
+        np.column_stack([shock_x, shock_y]),
+        delimiter=",",
+        header="x,y",
+        comments="",
+    )
+    config = load_body_fitted_config(write_config(tmp_path))
+
+    # check
+    with pytest.raises(ValueError, match="aren't finite"):
+        generate_body_fitted(config)
+
+
 # --------------------------------------------------
 # configuration errors
 # --------------------------------------------------
@@ -210,6 +274,24 @@ def test_a_shock_that_ends_too_early_is_reported(tmp_path: Path) -> None:
 
     # check
     with pytest.raises(ValueError, match="doesn't reach the outer"):
+        generate_body_fitted(config)
+
+
+def test_lines_too_short_for_the_first_spacing_are_reported(tmp_path: Path) -> None:
+    """A line shorter than (n_points - 1) x first_spacing fails, naming the line."""
+
+    # no extra offset: the stagnation line is 1.2 x 0.4 mm = 0.48 mm long, but 61
+    # points from a 10 um first spacing need more than 0.6 mm
+    write_shock(tmp_path / "shock.csv", 2.0 * X_END)
+    config_path = write_config(tmp_path, min_offset=0.0)
+    config_text = config_path.read_text().replace(
+        "first_spacing = 1.0e-6", "first_spacing = 1.0e-5"
+    )
+    config_path.write_text(config_text)
+    config = load_body_fitted_config(config_path)
+
+    # check
+    with pytest.raises(ValueError, match=r"wall x = 0 m .* cells would shrink away from the wall"):
         generate_body_fitted(config)
 
 

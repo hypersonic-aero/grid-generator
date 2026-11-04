@@ -62,7 +62,7 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
     ]
     if planar:
         examples.append((f"{command} init --span", "extruded in z (3D)"))
-    examples.append((f"{command} run {geometry_type}.toml", "generate the grid"))
+    examples.append((f"{command} run -c {geometry_type}.toml", "generate the grid"))
 
     # command group
     geometry_app = typer.Typer(
@@ -109,21 +109,21 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
 
         # check the options before touching any file
         if body not in BODY_BLOCKS:
-            typer.echo(f"Error: --body must be one of: {', '.join(BODY_BLOCKS)}", err=True)
+            typer.echo(f"error: --body must be one of: {', '.join(BODY_BLOCKS)}", err=True)
             raise typer.Exit(code=1)
         if normal not in NORMAL_BLOCKS:
-            typer.echo(f"Error: --normal must be one of: {', '.join(NORMAL_BLOCKS)}", err=True)
+            typer.echo(f"error: --normal must be one of: {', '.join(NORMAL_BLOCKS)}", err=True)
             raise typer.Exit(code=1)
         if span and geometry_type in AXISYMMETRIC_TYPES:
             typer.echo(
-                f"Error: --span extrudes planar bodies; a {geometry_type} is axisymmetric",
+                f"error: --span extrudes planar bodies; a {geometry_type} is axisymmetric",
                 err=True,
             )
             raise typer.Exit(code=1)
 
         # protect existing user configuration unless overwrite was requested
         if output.exists() and not force:
-            typer.echo(f"Error: {output} already exists. Use --force to overwrite.", err=True)
+            typer.echo(f"error: {output} already exists. Use --force to overwrite.", err=True)
             raise typer.Exit(code=1)
 
         # write and validate the starter configuration
@@ -133,14 +133,14 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
         load_body_fitted_config(output, expected_type=geometry_type)
 
         typer.echo(f"Created: {output}")
-        typer.echo(f"Edit the file, then run: grid-generator {geometry_type} run {output}")
+        typer.echo(f"Edit the file, then run: grid-generator {geometry_type} run -c {output}")
 
     # run: generate the grid from a configuration, report its quality and write it
     @geometry_app.command("run")
     def cmd_run(
         config: Annotated[
             Path,
-            typer.Argument(help="Configuration file."),
+            typer.Option("--config", "-c", help="Configuration file."),
         ] = default_config,
     ) -> None:
         """Generate the grid from a configuration."""
@@ -171,7 +171,7 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
             else:
                 output_path = write_file(output_file, dataset, dtype="f8")
         except (ImportError, OSError, TypeError, ValueError, tomllib.TOMLDecodeError) as error:
-            typer.echo(f"Error: {error}", err=True)
+            typer.echo(f"error: {error}", err=True)
             raise typer.Exit(code=1) from None
 
         # report: sizes, then the plane's quality

@@ -37,7 +37,7 @@ distribution_app = typer.Typer(
             ("grid-generator distribution info", "list the types"),
             ("grid-generator distribution info geometric", "keys and an example"),
             ("grid-generator distribution init --type tanh", "starter file"),
-            ("grid-generator distribution run distribution.toml", "write the points"),
+            ("grid-generator distribution run -c distribution.toml", "write the points"),
         ]
     ),
     no_args_is_help=True,
@@ -63,7 +63,7 @@ def cmd_info(
     # one type in detail
     if name not in DISTRIBUTIONS:
         typer.echo(
-            f"Error: unknown type {name!r}; choose from: {', '.join(DISTRIBUTIONS)}", err=True
+            f"error: unknown type {name!r}; choose from: {', '.join(DISTRIBUTIONS)}", err=True
         )
         raise typer.Exit(code=1)
     typer.echo(_type_text(name, DISTRIBUTIONS[name]))
@@ -88,12 +88,12 @@ def cmd_init(
 
     # check the options before touching any file
     if kind not in DISTRIBUTIONS:
-        typer.echo(f"Error: --type must be one of: {', '.join(DISTRIBUTIONS)}", err=True)
+        typer.echo(f"error: --type must be one of: {', '.join(DISTRIBUTIONS)}", err=True)
         raise typer.Exit(code=1)
 
     # protect existing user configuration unless overwrite was requested
     if output.exists() and not force:
-        typer.echo(f"Error: {output} already exists. Use --force to overwrite.", err=True)
+        typer.echo(f"error: {output} already exists. Use --force to overwrite.", err=True)
         raise typer.Exit(code=1)
 
     # write and validate the starter configuration
@@ -102,14 +102,16 @@ def cmd_init(
     load_distribution_config(output)
 
     typer.echo(f"Created: {output}")
-    typer.echo(f"Edit the file, then run: grid-generator distribution run {output}")
+    typer.echo(f"Edit the file, then run: grid-generator distribution run -c {output}")
 
 
 @distribution_app.command("run", help="Write the points of a distribution configuration.")
 def cmd_run(
     config: Annotated[
         Path,
-        typer.Argument(help="Distribution TOML configuration."),
+        typer.Option(
+            "--config", "-c", help="Distribution TOML configuration. Defaults to distribution.toml."
+        ),
     ] = Path("distribution.toml"),
 ) -> None:
     """Generate the points of a 1D distribution and write them."""
@@ -126,7 +128,7 @@ def cmd_run(
         output_file.parent.mkdir(parents=True, exist_ok=True)
         output_path = write_distribution(coordinates, output_file)
     except (OSError, TypeError, ValueError, tomllib.TOMLDecodeError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        typer.echo(f"error: {error}", err=True)
         raise typer.Exit(code=1) from None
 
     # report: size, range, spacings
