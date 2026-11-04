@@ -273,8 +273,32 @@ def test_a_shock_that_ends_too_early_is_reported(tmp_path: Path) -> None:
     config = load_body_fitted_config(write_config(tmp_path))
 
     # check
-    with pytest.raises(ValueError, match="doesn't reach the outer"):
+    with pytest.raises(ValueError, match="too far before the outflow"):
         generate_body_fitted(config)
+
+
+@pytest.mark.parametrize("shock_end", [X_END, X_END - 2.0e-3])
+def test_a_shock_that_ends_at_the_outflow_is_continued(tmp_path: Path, shock_end: float) -> None:
+    """A shock that stops at the outflow (or 2 mm before), like one taken from a CFD
+    solution, is continued straight, and gives the outer boundary of a longer shock."""
+
+    # reference: the shock computed well past the outflow
+    long_folder = tmp_path / "long"
+    long_folder.mkdir()
+    write_shock(long_folder / "shock.csv", 2.0 * X_END)
+    reference = generate_body_fitted(load_body_fitted_config(write_config(long_folder))).grid
+
+    # the same shock, cut at the outflow
+    short_folder = tmp_path / "short"
+    short_folder.mkdir()
+    write_shock(short_folder / "shock.csv", shock_end)
+    grid = generate_body_fitted(load_body_fitted_config(write_config(short_folder))).grid
+
+    # check: the outer boundary barely moves (the shock is nearly straight there)
+    shift = np.hypot(
+        grid.x[:, -1, 0] - reference.x[:, -1, 0], grid.y[:, -1, 0] - reference.y[:, -1, 0]
+    )
+    assert shift.max() < 1.0e-5
 
 
 def test_lines_too_short_for_the_first_spacing_are_reported(tmp_path: Path) -> None:

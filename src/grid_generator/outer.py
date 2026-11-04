@@ -1,8 +1,9 @@
 """Shock-aligned outer boundary: a smooth curve beyond the shock, and the grid's outer points on it.
 
 The [outer] table names a shock curve (x, y columns in a CSV file, e.g. written by
-`flow-theory shock-shape run` with a .csv output). The outer boundary is built in
-three steps:
+`flow-theory shock-shape run` with a .csv output). A curve that stops at the outflow
+or a little before it (a shock taken from a CFD solution ends at its domain end) is
+first continued straight past it. The outer boundary is built in three steps:
 
 1. Outer curve: every shock point is pushed out along the shock's own outward
    normal by (margin_factor - 1) * d + min_offset, with d its distance from the
@@ -27,10 +28,13 @@ curve is mirrored there, so the stagnation line ahead of the nose crosses it cle
 # --------------------------------------------------
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
+
+logger = logging.getLogger(__name__)
 
 # --------------------------------------------------
 # constants
@@ -115,9 +119,12 @@ def outer_points(
         Outer points x and y [m], one per wall point.
 
     Raises:
-        ValueError: If a wall normal doesn't reach the outer curve (e.g. the shock
-            curve ends before the outflow).
+        ValueError: If the shock curve stops too far before the outflow to continue
+            it, or a wall normal doesn't reach the outer curve.
     """
+
+    # a shock that stops at (or a little before) the outflow: continue it straight past it
+    shock_x, shock_y = extend_shock(shock_x, shock_y, x_wall, y_wall, margin_factor, min_offset)
 
     # outer curve: the shock pushed out by the margin
     curve_x, curve_y = offset_shock(shock_x, shock_y, x_wall, y_wall, margin_factor, min_offset)
@@ -134,6 +141,90 @@ def outer_points(
     point_y = np.interp(arc_smooth, curve_arc, curve_y)
 
     return point_x, point_y
+
+
+def extend_shock(
+    shock_x: NDArray[np.float64],
+    shock_y: NDArray[np.float64],
+    x_wall: NDArray[np.float64],
+    y_wall: NDArray[np.float64],
+    margin_factor: float,
+    min_offset: float,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Continue a shock curve straight past the outflow when it stops short of it.
+
+    A shock taken from a CFD solution stops at that solution's domain end, about
+    where the new grid ends too. Its last stretch is continued along the chord over
+    one shock-layer height (so noise at the end doesn't tilt it), until the curve
+    passes the outflow by twice the outer boundary's offset there.
+
+    Args:
+        shock_x: Shock x [m], from the vertex outward.
+        shock_y: Shock y [m], from the vertex outward.
+        x_wall: Wall points x [m], from the stagnation point to the outflow.
+        y_wall: Wall points y [m].
+        margin_factor: Factor on the shock's distance from the wall (>= 1).
+        min_offset: Distance added beyond the scaled shock distance [m].
+
+    Returns:
+        Shock x and y [m], continued past the outflow where needed.
+
+    Raises:
+        ValueError: If the curve stops more than one shock-layer height (its
+            distance from the wall) before the outflow, or its end doesn't run
+            downstream.
+    """
+
+    # distance of the curve's end from the wall, and the outer boundary's offset there
+    end_distance = float(_distance_to_polyline(shock_x[-1:], shock_y[-1:], x_wall, y_wall)[0])
+    end_offset = (margin_factor - 1.0) * end_distance + min_offset
+
+    # nothing to do when the curve already passes the outflow far enough
+    x_outflow = float(x_wall[-1])
+    x_reach = x_outflow + 2.0 * end_offset
+    if shock_x[-1] >= x_reach:
+        return shock_x, shock_y
+
+    # check: a straight continuation is only trusted over about one shock-layer height
+    if shock_x[-1] < x_outflow - end_distance:
+        raise ValueError(
+            f"the shock curve ends at x = {shock_x[-1]:.4g} m, too far before the outflow "
+            f"at x = {x_outflow:.4g} m to continue it straight (more than its distance from "
+            f"the wall, {end_distance:.3g} m); give a longer curve (flow-theory: raise x_e)"
+        )
+
+    # direction of the last stretch: the chord over one shock-layer height
+    arc = _cumulative_arc_length(shock_x, shock_y)
+    start = int(np.searchsorted(arc, arc[-1] - end_distance))
+    start = min(start, shock_x.size - 2)
+    chord_x = shock_x[-1] - shock_x[start]
+    chord_y = shock_y[-1] - shock_y[start]
+    chord_length = float(np.hypot(chord_x, chord_y))
+    direction_x = chord_x / chord_length
+    direction_y = chord_y / chord_length
+
+    # check: the end must run downstream to ever reach the outflow
+    if direction_x <= 0.0:
+        raise ValueError(
+            f"the shock curve's end (x = {shock_x[-1]:.4g} m) doesn't run downstream, "
+            "so it can't be continued past the outflow"
+        )
+
+    # straight continuation in ten segments, until x passes the reach
+    length = (x_reach - shock_x[-1]) / direction_x
+    steps = np.linspace(0.0, length, 11)[1:]
+    extended_x = np.concatenate([shock_x, shock_x[-1] + steps * direction_x])
+    extended_y = np.concatenate([shock_y, shock_y[-1] + steps * direction_y])
+
+    # report the continuation (visible with --verbose)
+    logger.info(
+        "shock curve continued straight by %.3g m, from x = %.4g m to x = %.4g m",
+        length,
+        shock_x[-1],
+        extended_x[-1],
+    )
+
+    return extended_x, extended_y
 
 
 def offset_shock(
