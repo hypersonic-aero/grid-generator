@@ -24,24 +24,17 @@ def version_callback(value: bool) -> None:
 # --------------------------------------------------
 # verbose callback
 # --------------------------------------------------
-
-# loggers that --verbose switches to debug: this tool and the uahypersonics
-# packages it calls
-DEBUG_LOGGERS = ("grid_generator", "canonical_geometries", "cfd_io")
-
-
 def verbose_callback(value: bool) -> None:
-    """Configure console logging; --verbose adds debug output from our own packages.
+    """Configure console logging; --verbose adds debug output from this tool.
 
-    By default only warnings are shown. With --verbose, this tool and the
-    packages it calls (e.g. cfd-io writing a grid) log at debug level, while
-    third-party libraries (h5py, ...) stay quiet.
+    By default only warnings are shown. With --verbose, this tool logs at
+    debug level, while the packages it calls (canonical-geometries, cfd-io,
+    h5py, ...) stay quiet.
     """
 
     # default console logging for every logger: warnings only
     logging.basicConfig(level=logging.WARNING, format="%(levelname)-8s %(message)s")
 
-    # debug output from this tool and the uahypersonics packages it calls
+    # debug output from this tool only; the packages it calls keep their levels
     if value:
-        for logger_name in DEBUG_LOGGERS:
-            logging.getLogger(logger_name).setLevel(logging.DEBUG)
+        logging.getLogger("grid_generator").setLevel(logging.DEBUG)
