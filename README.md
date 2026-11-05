@@ -52,7 +52,9 @@ For a shock-line grid the bow shock is a grid line: the same index `j` on every
 wall-normal line, so a solution's captured shock stays in one row of cells.
 `init --shock` writes that layout; it reads the shock curve from a CSV file
 (e.g. `flow-theory shock-shape run` with a `.csv` output, or a shock taken from a
-CFD solution):
+CFD solution). Grid line `i = 0` is the symmetry line on the axis `y = 0`, so the
+curve starts there; a curve that starts a little above it (a shock from cell-centre
+data starts half a cell away) is continued to the axis, with a warning:
 
 ```bash
 grid-generator cone init --shock

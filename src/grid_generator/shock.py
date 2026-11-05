@@ -23,6 +23,10 @@ there to their outer point.
 
 The shock is assumed symmetric about the axis (or symmetry plane) y = 0; both curves
 are mirrored there, so the stagnation line ahead of the nose crosses them cleanly.
+That needs the curve to start on the axis. A curve that starts a little off it (a shock
+taken from cell-centre data starts half a cell away) is first continued to the axis,
+crossing it at right angles as a symmetric shock does (start_on_axis); otherwise the
+symmetry line i = 0 would bend off y = 0 toward the curve's first point.
 """
 
 # --------------------------------------------------
@@ -47,6 +51,16 @@ _SEGMENT_TOLERANCE = 1.0e-9
 
 # width (standard deviation, in points) of the smoothing of the outer spacing
 _SPACING_SMOOTHING_WIDTH = 3.0
+
+# a point within this fraction of the nose radius of y = 0 lies on the axis
+AXIS_TOLERANCE = 1.0e-12
+
+# a curve starting farther from the axis than this fraction of the nose radius is not
+# just half a cell off it; continuing it there would be a guess, so it is refused
+_AXIS_GAP_LIMIT = 0.1
+
+# points the axis continuation is fitted through (x = a + b y^2)
+_AXIS_FIT_POINTS = 5
 
 
 # --------------------------------------------------
@@ -93,6 +107,67 @@ def read_shock_curve(path: str | Path) -> tuple[NDArray[np.float64], NDArray[np.
         raise ValueError(f"{path}: expected at least two distinct shock points")
 
     return shock_x, shock_y
+
+
+def start_on_axis(
+    shock_x: NDArray[np.float64],
+    shock_y: NDArray[np.float64],
+    nose_radius: float,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Make the shock curve start on the axis y = 0, where the symmetry line i = 0 meets it.
+
+    A symmetric shock crosses the axis at right angles (dx/dy = 0 there), so near it
+    the curve is x = a + b y^2. A curve whose first point lies off the axis is fitted
+    that way through its first few points, and the point (a, 0) is put in front of it;
+    a warning names the first point's distance from the axis.
+
+    Args:
+        shock_x: Shock x [m], from its smallest y outward.
+        shock_y: Shock y [m].
+        nose_radius: Nose radius of the body [m], the scale of "close to the axis".
+
+    Returns:
+        Shock x and y [m], starting on the axis (unchanged if it already did).
+
+    Raises:
+        ValueError: If the curve starts farther from the axis than a tenth of the nose
+            radius (more than the half cell of cell-centre data), or below it.
+    """
+
+    # on the axis already: nothing to do
+    first_y = float(shock_y[0])
+    if abs(first_y) <= AXIS_TOLERANCE * nose_radius:
+        return shock_x, shock_y
+
+    # check: a small gap above the axis, not a curve that misses the nose
+    if first_y < 0.0 or first_y > _AXIS_GAP_LIMIT * nose_radius:
+        raise ValueError(
+            f"the shock curve starts at y = {first_y:.4g} m; it must start on the axis "
+            f"y = 0, or within {_AXIS_GAP_LIMIT:g} nose radii above it (e.g. half a cell "
+            "off, from cell-centre data), to be continued there"
+        )
+
+    # fit x = a + b y^2 through the first points: a is where the curve meets the axis
+    n_fit = min(_AXIS_FIT_POINTS, shock_x.size)
+    y_fit = shock_y[:n_fit]
+    x_fit = shock_x[:n_fit]
+    matrix = np.column_stack([np.ones(n_fit), y_fit**2])
+    coefficients, *_ = np.linalg.lstsq(matrix, x_fit, rcond=None)
+    axis_x = float(coefficients[0])
+
+    # the curve, continued to the axis
+    axis_shock_x = np.concatenate([[axis_x], shock_x])
+    axis_shock_y = np.concatenate([[0.0], shock_y])
+
+    # tell the user: the grid differs from the curve's points there
+    logger.warning(
+        "the shock curve starts at y = %.4g m, off the axis (a curve from cell-centre "
+        "data starts half a cell away); continued it to the axis at x = %.6g m",
+        first_y,
+        axis_x,
+    )
+
+    return axis_shock_x, axis_shock_y
 
 
 def points_on_curve(
@@ -271,8 +346,8 @@ def normal_crossings(
 ) -> NDArray[np.float64]:
     """Arc length along a curve where each wall normal crosses it.
 
-    The curve starts on the axis (y = 0) and is mirrored there, so the stagnation
-    line ahead of the nose crosses it at its first point.
+    The curve starts on the axis (y = 0; see start_on_axis) and is mirrored there, so
+    the stagnation line ahead of the nose crosses it at its first point.
 
     Args:
         x_wall: Wall points x [m].

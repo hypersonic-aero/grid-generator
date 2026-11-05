@@ -53,7 +53,14 @@ from grid_generator.config.body_fitted import (
 )
 from grid_generator.distributions import DistributionSpec, EquidistantSpec, build_distribution
 from grid_generator.quality import folded_cells
-from grid_generator.shock import extend_shock, offset_shock, points_on_curve, read_shock_curve
+from grid_generator.shock import (
+    AXIS_TOLERANCE,
+    extend_shock,
+    offset_shock,
+    points_on_curve,
+    read_shock_curve,
+    start_on_axis,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +125,17 @@ def generate_body_fitted(source: BodyFittedConfig | str | Path) -> Dataset:
 
     # j-lines from the wall out to the outer boundary: (ni, nj)
     x_plane, y_plane = build_grid_lines(config, x_wall, y_wall, nx, ny)
+
+    # check: the symmetry line i = 0 lies on the axis y = 0 (a solver's symmetry or slip
+    # wall there must not be bent: the freestream would be compressed against it)
+    axis_offset = float(np.max(np.abs(y_plane[0, :])))
+    if axis_offset > AXIS_TOLERANCE * config.geometry.nose_radius:
+        raise ValueError(
+            f"the symmetry line i = 0 leaves the axis y = 0 by up to {axis_offset:.4g} m"
+        )
+
+    # the symmetry line exactly on the axis (removes round-off; solvers divide by y there)
+    y_plane[0, :] = 0.0
 
     # check: no folded, collapsed or NaN cells, so a broken grid is never written
     folded = folded_cells(x_plane, y_plane)
@@ -282,9 +300,11 @@ def _shock_line_grid(
             can't hold its points.
     """
 
-    # the shock curve, continued straight past the outflow if it stops short of it
+    # the shock curve, starting on the axis, and continued straight past the outflow if
+    # it stops short of it
     shock = config.shock
     shock_x, shock_y = read_shock_curve(shock.curve)
+    shock_x, shock_y = start_on_axis(shock_x, shock_y, config.geometry.nose_radius)
     shock_x, shock_y = extend_shock(
         shock_x, shock_y, x_wall, y_wall, shock.margin_factor, shock.min_offset
     )

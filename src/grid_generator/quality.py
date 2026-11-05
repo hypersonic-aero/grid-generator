@@ -59,6 +59,8 @@ class ShockLineQuality:
             (j_s to j_s + 1) [m].
         lowered_wall_spacing: Lines whose wall spacing is below the configured
             first spacing (lines too short for it, near a small nose).
+        axis_offset: Largest distance of the symmetry line (i = 0) from the axis
+            y = 0 [m]; 0 on a sound grid.
     """
 
     shock_line_j: int
@@ -66,6 +68,7 @@ class ShockLineQuality:
     spacing_below: tuple[float, float]
     spacing_above: tuple[float, float]
     lowered_wall_spacing: int
+    axis_offset: float
 
     def summary(self) -> str:
         """Return the report as aligned text lines, for the CLI."""
@@ -76,6 +79,7 @@ class ShockLineQuality:
             f"  spacing below the shock {_range_text(self.spacing_below)} m",
             f"  spacing above the shock {_range_text(self.spacing_above)} m",
             f"  wall spacing lowered    {self.lowered_wall_spacing} lines",
+            f"  symmetry line off axis  {self.axis_offset:.3e} m (max |y| on i = 0)",
         ]
         text = "\n".join(lines)
         return text
@@ -177,12 +181,16 @@ def shock_line_quality(
     wall_spacing = np.hypot(x[:, 1] - x[:, 0], y[:, 1] - y[:, 0])
     lowered = int(np.sum(wall_spacing < first_spacing * (1.0 - 1.0e-6)))
 
+    # the symmetry line's distance from the axis
+    axis_offset = float(np.max(np.abs(y[0, :])))
+
     report = ShockLineQuality(
         shock_line_j=j_s,
         shock_distance=(float(shock_distance.min()), float(shock_distance.max())),
         spacing_below=(float(below.min()), float(below.max())),
         spacing_above=(float(above.min()), float(above.max())),
         lowered_wall_spacing=lowered,
+        axis_offset=axis_offset,
     )
     return report
 

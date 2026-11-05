@@ -5,6 +5,7 @@
 # --------------------------------------------------
 from __future__ import annotations
 
+import logging
 import math
 from pathlib import Path
 
@@ -14,7 +15,8 @@ from typer.testing import CliRunner
 
 from grid_generator import generate_body_fitted, load_body_fitted_config
 from grid_generator.cli import app
-from grid_generator.quality import folded_cells
+from grid_generator.quality import folded_cells, shock_line_quality
+from grid_generator.shock import start_on_axis
 
 runner = CliRunner()
 
@@ -594,3 +596,111 @@ def test_cli_init_rejects_shock_with_a_normal_choice(tmp_path: Path) -> None:
     )
     assert result.exit_code == 1
     assert "--normal" in result.output
+
+
+# --------------------------------------------------
+# the symmetry axis (i = 0)
+# --------------------------------------------------
+def write_off_axis_shock(path: Path, gap: float) -> None:
+    """The test shock, starting a small gap above the axis (like cell-centre data)."""
+
+    # the full curve, then only its part above the gap, from an interpolated first point
+    x, y = write_shock(path, 2.0 * X_END)
+    keep = y > gap
+    first_x = float(np.interp(gap, y, x))
+    off_x = np.concatenate([[first_x], x[keep]])
+    off_y = np.concatenate([[gap], y[keep]])
+    np.savetxt(path, np.column_stack([off_x, off_y]), delimiter=",", header="x,y", comments="")
+
+
+def test_start_on_axis_continues_a_curve_that_starts_off_the_axis(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A parabola x = a + b y^2 starting off the axis gets (a, 0) in front, with a warning."""
+
+    # a symmetric curve near the axis, starting 10 um above it
+    y = np.linspace(1.0e-5, 1.0e-3, 50)
+    x = -4.0e-4 + 120.0 * y**2
+
+    with caplog.at_level(logging.WARNING, logger="grid_generator"):
+        axis_x, axis_y = start_on_axis(x, y, NOSE_RADIUS)
+
+    assert axis_y[0] == 0.0
+    assert axis_x[0] == pytest.approx(-4.0e-4, abs=1.0e-15)
+    np.testing.assert_array_equal(axis_x[1:], x)
+    np.testing.assert_array_equal(axis_y[1:], y)
+    assert "off the axis" in caplog.text
+
+
+def test_start_on_axis_leaves_a_curve_on_the_axis_alone() -> None:
+    """A curve that starts on the axis (e.g. from vertex data) is returned as it is."""
+    y = np.linspace(0.0, 1.0e-3, 50)
+    x = -4.0e-4 + 120.0 * y**2
+
+    axis_x, axis_y = start_on_axis(x, y, NOSE_RADIUS)
+
+    assert axis_x is x
+    assert axis_y is y
+
+
+def test_start_on_axis_refuses_a_curve_that_misses_the_axis() -> None:
+    """Far more than half a cell off the axis is not a gap to fill but a wrong curve."""
+    y = np.linspace(0.5 * NOSE_RADIUS, 0.05, 50)
+    x = -4.0e-4 + 0.2 * y
+
+    with pytest.raises(ValueError, match="must start on the axis"):
+        start_on_axis(x, y, NOSE_RADIUS)
+
+
+def test_a_shock_curve_off_the_axis_keeps_the_symmetry_line_on_it(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A curve starting half a cell off the axis: line i = 0 still lies exactly on y = 0.
+
+    Without the continuation, the line bent toward the curve's first point, and a solver
+    compressed the freestream against that bent symmetry line ahead of the shock. With
+    it, the grid is the one the full curve (starting on the axis) gives.
+    """
+
+    # the full curve's grid
+    on_folder = tmp_path / "on"
+    on_folder.mkdir()
+    x_on, y_on, attrs = shock_line_grid(on_folder)
+
+    # the same curve starting 10 um above the axis
+    off_folder = tmp_path / "off"
+    off_folder.mkdir()
+    write_off_axis_shock(off_folder / "shock.csv", 1.0e-5)
+    config = load_body_fitted_config(write_config(off_folder))
+    with caplog.at_level(logging.WARNING, logger="grid_generator"):
+        dataset = generate_body_fitted(config)
+    x_off = dataset.grid.x[:, :, 0]
+    y_off = dataset.grid.y[:, :, 0]
+
+    # check: the symmetry line on the axis, the user told, the grid as with the full curve
+    assert np.all(y_off[0, :] == 0.0)
+    assert "off the axis" in caplog.text
+    nose_cell = np.hypot(np.diff(x_on[:2, 0]), np.diff(y_on[:2, 0]))[0]
+    assert np.hypot(x_off - x_on, y_off - y_on).max() < 1.0e-3 * nose_cell
+
+    # check: the quality report says so
+    report = shock_line_quality(dataset.grid, attrs["shock_line_j"], FIRST_SPACING)
+    assert report.axis_offset == 0.0
+    assert "symmetry line off axis  0.000e+00 m" in report.summary()
+
+
+def test_a_symmetry_line_off_the_axis_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The check behind the fix: without the continuation, line i = 0 leaves the axis."""
+
+    # the old behaviour: the curve used as it is
+    monkeypatch.setattr(
+        "grid_generator.body_fitted.start_on_axis",
+        lambda shock_x, shock_y, radius: (shock_x, shock_y),
+    )
+    write_off_axis_shock(tmp_path / "shock.csv", 1.0e-5)
+    config = load_body_fitted_config(write_config(tmp_path))
+
+    with pytest.raises(ValueError, match="symmetry line i = 0 leaves the axis"):
+        generate_body_fitted(config)

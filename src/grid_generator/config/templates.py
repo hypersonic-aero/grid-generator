@@ -206,7 +206,8 @@ SHOCK_BLOCK = """\
 [shock]
 # shock curve for this body: CSV with x, y columns and a header line, e.g. from
 # flow-theory shock-shape run with a .csv output, or a shock taken from a CFD
-# solution; the path is relative to this file
+# solution; the path is relative to this file. It starts on the axis y = 0; one that
+# starts a little above it (cell-centre data: half a cell) is continued to the axis
 curve = "shock.csv"
 # outer boundary: margin_factor x the wall-to-shock distance, plus min_offset
 margin_factor = 1.5
