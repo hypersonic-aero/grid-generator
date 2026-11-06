@@ -29,8 +29,9 @@ way toward the outer point; its points are [points.freestream], growing from the
 spacing at the shock. Every line has the same point counts, so j_s is the same
 everywhere.
 
-With a [span] table (plate and wedge), the 2D plane is extruded in z: the same
-(x, y) plane at every z of the span distribution, giving a 3D grid.
+With a [sweep] table, the 2D plane becomes a 3D grid: revolved about the x-axis into
+a sector (cone, tangent ogive), or extruded along z (plate, wedge); the plane k = 0 is
+the 2D grid exactly (see grid_generator.sweep).
 """
 
 # --------------------------------------------------
@@ -61,6 +62,7 @@ from grid_generator.shock import (
     read_shock_curve,
     start_on_axis,
 )
+from grid_generator.sweep import sweep_plane, sweep_transform
 
 logger = logging.getLogger(__name__)
 
@@ -78,11 +80,11 @@ MARKER_SIDES = {
     "outer": "jmax",
 }
 
-# the two extra sides of an extruded (3D) grid: the first and last z-planes; the
-# solver decides what they are (periodic, symmetry, ...)
-SPAN_MARKER_SIDES = {
-    "span_min": "kmin",
-    "span_max": "kmax",
+# the two extra sides of a swept (3D) grid: the side faces k = 0 and k = n_points - 1;
+# the solver decides what they are (periodic, symmetry, ...)
+SWEEP_MARKER_SIDES = {
+    "sweep_low": "kmin",
+    "sweep_high": "kmax",
 }
 
 
@@ -92,15 +94,16 @@ SPAN_MARKER_SIDES = {
 def generate_body_fitted(source: BodyFittedConfig | str | Path) -> Dataset:
     """Generate a body-fitted grid from a config object or TOML file.
 
-    The grid is 2D, or 3D when the config has a [span] to extrude it in z.
+    The grid is 2D, or 3D when the config has a [sweep] to revolve or extrude it.
 
     Args:
         source: Validated configuration or configuration file path.
 
     Returns:
-        Grid-only CFD dataset with shape (ni, nj, 1), or (ni, nj, nk) when extruded, in
+        Grid-only CFD dataset with shape (ni, nj, 1), or (ni, nj, nk) when swept, in
         cfd-io's convention, with the boundary markers SU2 output needs. A shock-line
-        grid also names its shock line: attrs["shock_line_j"] = j_s.
+        grid also names its shock line: attrs["shock_line_j"] = j_s. A swept grid
+        describes the transform between its side faces in attrs["sweep"].
 
     Raises:
         ValueError: If the grid lines can't be built, or cross each other (folded or
@@ -149,25 +152,22 @@ def generate_body_fitted(source: BodyFittedConfig | str | Path) -> Dataset:
             "the grid lines cross there: check the shock curve or the height"
         )
 
-    # span: the z-planes to extrude to, or the single plane z = 0 for a 2D grid
-    if config.span is not None:
-        z_axis = build_distribution(config.span)
+    # cfd-io's (ni, nj, nk) layout: revolved or extruded, or the single plane z = 0
+    if config.sweep is not None:
+        x, y, z = sweep_plane(x_plane, y_plane, config.sweep)
     else:
-        z_axis = np.array([0.0])
-    nk = z_axis.size
-
-    # cfd-io's (ni, nj, nk) layout: the same (x, y) plane at every z
-    x = np.repeat(x_plane[:, :, None], nk, axis=2)
-    y = np.repeat(y_plane[:, :, None], nk, axis=2)
-    z = np.broadcast_to(z_axis[None, None, :], x.shape).copy()
+        x = x_plane[:, :, None].copy()
+        y = y_plane[:, :, None].copy()
+        z = np.zeros_like(x)
     grid = StructuredGrid(x=x, y=y, z=z)
+    nk = grid.shape[2]
 
-    # markers: four sides in 2D, plus the two z-planes in 3D, named by [markers]
+    # markers: four sides in 2D, plus the two side faces in 3D, named by [markers]
     markers = {}
     for key, side in MARKER_SIDES.items():
         markers[side] = getattr(config.markers, key)
     if nk > 1:
-        for key, side in SPAN_MARKER_SIDES.items():
+        for key, side in SWEEP_MARKER_SIDES.items():
             markers[side] = getattr(config.markers, key)
     dimensionality = 3 if nk > 1 else 2
 
@@ -180,7 +180,7 @@ def generate_body_fitted(source: BodyFittedConfig | str | Path) -> Dataset:
         "dimensionality": dimensionality,
         "producer": "grid-generator",
         "geometry_type": geometry_type,
-        "axisymmetric": geometry_type in AXISYMMETRIC_TYPES,
+        "axisymmetric": geometry_type in AXISYMMETRIC_TYPES and config.sweep is None,
         "ni": grid.shape[0],
         "nj": grid.shape[1],
         "nk": grid.shape[2],
@@ -190,6 +190,11 @@ def generate_body_fitted(source: BodyFittedConfig | str | Path) -> Dataset:
     # a shock-line grid names the grid line on the shock (for solvers and post-processing)
     if config.shock is not None:
         attrs["shock_line_j"] = config.points.shock_layer.n_points - 1
+
+    # a swept grid: how its high side face follows from the low one
+    if config.sweep is not None:
+        transform = sweep_transform(config.sweep)
+        attrs["sweep"] = transform.as_dict(markers["kmin"], markers["kmax"])
 
     dataset = Dataset(grid=grid, attrs=attrs)
     return dataset
@@ -322,7 +327,9 @@ def _shock_line_grid(
 
     # each line: two segments meeting on the shock
     configured_wall_spacing = config.points.shock_layer.first_spacing
+    end_spacing_fraction = config.points.shock_layer.end_spacing_fraction
     lowered = []
+    shock_lowered = []
     lines_x = []
     lines_y = []
     for i in range(x_wall.size):
@@ -346,6 +353,10 @@ def _shock_line_grid(
             ) from None
         if inner_spec.first_spacing < configured_wall_spacing:
             lowered.append(i)
+
+        # lines too short for both end spacings: the spacing at the shock gave way
+        if inner_spec.end_spacing < end_spacing_fraction * float(shock_height):
+            shock_lowered.append(i)
 
         # segment 1: leaves the wall along its normal, ends on the shock point
         inner_x, inner_y, arrival_x, arrival_y = _bent_segment(
@@ -401,6 +412,16 @@ def _shock_line_grid(
             len(lowered),
             x_wall[lowered[0]],
             x_wall[lowered[-1]],
+        )
+
+    # report the lines whose shock spacing was lowered instead (visible with --verbose)
+    if shock_lowered:
+        logger.info(
+            "[points.shock_layer] spacing at the shock lowered on %d lines too short for "
+            "both end spacings (wall x = %.4g to %.4g m)",
+            len(shock_lowered),
+            x_wall[shock_lowered[0]],
+            x_wall[shock_lowered[-1]],
         )
 
     x_plane = np.vstack(lines_x)

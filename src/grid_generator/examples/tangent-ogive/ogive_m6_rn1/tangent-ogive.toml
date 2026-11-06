@@ -5,8 +5,9 @@
 # shock.csv: flow-theory shock-shape run, method billig_blended, for Mach 6
 #   (gamma = 1.4) on the same body, to x_e = 0.4 m (continued past the outflow here)
 # the shock is the grid line j = 160 on every line (shock layer: 161 points); near
-#   the nose the lines are too short for the 1 um wall spacing, which is lowered
-#   there (see "wall spacing lowered" in the run summary)
+#   the nose the lines are too short for both the 1 um wall spacing and 1 % at the
+#   shock, so the spacing at the shock is lowered there; the shortest lines (under
+#   160 um) get uniform cells of just under 1 um (see the run summary)
 # run: grid-generator tangent-ogive run
 
 # Spherically blunted tangent ogive, axisymmetric about the x axis; the grid is the

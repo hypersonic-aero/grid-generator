@@ -4,8 +4,9 @@
 # shock.csv: flow-theory shock-shape run, method billig, for Mach 6 (gamma = 1.4)
 #   on the same body
 # the shock is the grid line j = 160 on every line (shock layer: 161 points); near
-#   the leading edge the lines are too short for the 1 um wall spacing, which is
-#   lowered there (see "wall spacing lowered" in the run summary)
+#   the leading edge the lines are too short for both the 1 um wall spacing and 1 %
+#   at the shock, so the spacing at the shock is lowered there; lines under 160 um
+#   get uniform cells, below 1 um at the leading edge (see the run summary)
 # run: grid-generator plate run
 
 # Flat plate with a circular leading edge (upper half).

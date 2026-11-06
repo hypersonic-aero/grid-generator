@@ -1,9 +1,10 @@
 """Starter configurations written by `grid-generator <command> init`.
 
 The templates are put together from TOML blocks: per geometry (description,
-[geometry], [domain]), and shared blocks for the points, span, markers and output. The body
+[geometry], [domain]), and shared blocks for the points, sweep, markers and output. The body
 and wall-normal distributions each have a choice of block (init --body, --normal),
-the span block is optional (init --span), a shock-line grid replaces the constant
+the sweep block is optional (init --sweep: revolve for axisymmetric bodies, extrude
+for planar ones), a shock-line grid replaces the constant
 height and the wall-normal block (init --shock), and Cartesian grids pick their axes
 (init --dims). 1D distributions take their example from the distribution reference
 (init --type). Every combination is a complete, valid file.
@@ -14,6 +15,7 @@ height and the wall-normal block (init --shock), and Cartesian grids pick their 
 # --------------------------------------------------
 from __future__ import annotations
 
+from grid_generator.config.body_fitted import AXISYMMETRIC_TYPES
 from grid_generator.distributions.catalog import DISTRIBUTIONS
 
 # --------------------------------------------------
@@ -307,9 +309,11 @@ SHOCK_LINE_POINTS_BLOCK = """\
 type = "vinokur"
 # points from the wall to the shock, both included
 n_points = 161
-# wall spacing in [m]; lowered on lines too short for it (near a small nose)
+# wall spacing in [m]; only a line shorter than (n_points - 1) x first_spacing gets
+# uniform cells instead (the largest wall spacing it can hold)
 first_spacing = 1.0e-6
-# spacing at the shock, as a fraction of each line's wall-to-shock distance
+# spacing at the shock, as a fraction of each line's wall-to-shock distance; lowered on
+# lines too short for both end spacings (near a small nose), so the wall keeps its spacing
 end_spacing_fraction = 0.01
 
 # beyond the shock: from the shock to the outer boundary, growing from the spacing at
@@ -323,19 +327,39 @@ n_points = 41
 
 
 # --------------------------------------------------
-# body-fitted grids: optional span, and output
+# body-fitted grids: optional sweep, and output
 # --------------------------------------------------
-SPAN_BLOCK = """\
-# Extrusion in z (spanwise) into a 3D grid: the same 2D plane at every z. Same
-# distribution types as the Cartesian axes. The two new sides are marked span_min and
-# span_max (e.g. periodic or symmetry in the solver). 3D output: .su2, .h5 or .p3dfmt
-# (not .msh or .p2dfmt).
-[span]
-type = "equidistant"
-start = 0.0
-end = 2.0e-3
+# keyed by sweep type: axisymmetric bodies are revolved, planar ones extruded
+SWEEP_BLOCKS: dict[str, str] = {
+    "revolve": """\
+# 3D grid: the meridian plane revolved about the x-axis into a sector, from the plane
+# z = 0 (the 2D grid, side face sweep_low) toward +z (side face sweep_high). The side
+# faces match point for point; periodic or symmetry planes is the solver's choice (run
+# prints the SU2 and Eilmer lines for a periodic pair). The symmetry line lies on the
+# axis: .su2 and .msh merge it, with prisms around it. 3D output: .su2, .msh, .h5 or
+# .p3dfmt.
+[sweep]
+# revolve (axisymmetric bodies)
+type = "revolve"
+# sector angle in [deg]
+angle_deg = 10.0
+# points in the angle, both side faces included (odd for [output] order = 2)
 n_points = 21
-"""
+""",
+    "extrude": """\
+# 3D grid: the plane repeated along z, from z = 0 (the 2D grid, side face sweep_low)
+# to the width (side face sweep_high), equally spaced. The side faces match point for
+# point; periodic or symmetry planes is the solver's choice (run prints the SU2 line
+# for a periodic pair). 3D output: .su2, .msh, .h5 or .p3dfmt.
+[sweep]
+# extrude (planar bodies)
+type = "extrude"
+# span in z in [m]
+width = 2.0e-3
+# points in z, both side faces included (odd for [output] order = 2)
+n_points = 21
+""",
+}
 
 MARKERS_BLOCK = """\
 # Boundary names in the grid file; the solver input assigns the boundary conditions to
@@ -351,11 +375,13 @@ outflow = "outflow"
 symmetry = "symmetry"
 """
 
-# extra [markers] lines for an extruded grid (init --span)
-SPAN_MARKERS_LINES = """\
-# first and last z-plane of the extruded grid
-span_min = "span_min"
-span_max = "span_max"
+# extra [markers] lines for a swept grid (init --sweep)
+SWEEP_MARKERS_LINES = """\
+# side face k = 0 of the swept grid (the 2D plane); for PyFR periodic faces, name the
+# pair periodic_0_l and periodic_0_r
+sweep_low = "sweep_low"
+# side face at the last k-plane
+sweep_high = "sweep_high"
 """
 
 BODY_FITTED_OUTPUT_BLOCK = """\
@@ -363,9 +389,12 @@ BODY_FITTED_OUTPUT_BLOCK = """\
 [output]
 # grid file; the extension picks the format via cfd-io (.su2, .h5, .p2dfmt, .msh, ...)
 filename = "{geometry_type}_local.su2"
-# element order, for .msh only: 1 (straight-edged quads) or 2 (curved 9-node quads
-# for high-order solvers; needs odd point counts in every [points] table)
+# element order, for .msh only: 1 (straight-edged elements) or 2 (curved 9-node quads,
+# 27-node hexahedra in 3D, for high-order solvers; needs odd point counts in every
+# [points] table and in [sweep])
 order = 1
+# factor on the coordinates in the file: 1 for metres, 1000 for millimetres
+scale = 1.0
 """
 
 # default choices for init
@@ -433,7 +462,7 @@ def body_fitted_template(
     geometry_type: str,
     body: str = DEFAULT_BODY,
     normal: str | None = None,
-    span: bool = False,
+    sweep: bool = False,
     shock: bool = False,
 ) -> str:
     """Starter configuration for a body-fitted grid.
@@ -443,7 +472,8 @@ def body_fitted_template(
         body: Key in BODY_BLOCKS: the body distribution along the wall.
         normal: Key in NORMAL_BLOCKS: the wall-normal distribution of a
             constant-height grid (default: DEFAULT_NORMAL).
-        span: Add a [span] table (extrusion in z; planar bodies only).
+        sweep: Add a [sweep] table: revolve an axisymmetric body into a sector,
+            extrude a planar one along z (3D).
         shock: Write a shock-line grid ([shock], [points.shock_layer],
             [points.freestream]) instead of a constant-height one.
 
@@ -479,8 +509,8 @@ def body_fitted_template(
         options += f" --body {body}"
     if normal != DEFAULT_NORMAL:
         options += f" --normal {normal}"
-    if span:
-        options += " --span"
+    if sweep:
+        options += " --sweep"
     if shock:
         options += " --shock"
     header = (
@@ -499,9 +529,10 @@ def body_fitted_template(
 
     # join the blocks
     blocks = [header, *outer_blocks, BODY_FITTED_NOSE_BLOCK, BODY_BLOCKS[body], normal_block]
-    if span:
-        blocks.append(SPAN_BLOCK)
-        blocks.append(MARKERS_BLOCK + SPAN_MARKERS_LINES)
+    if sweep:
+        sweep_type = "revolve" if geometry_type in AXISYMMETRIC_TYPES else "extrude"
+        blocks.append(SWEEP_BLOCKS[sweep_type])
+        blocks.append(MARKERS_BLOCK + SWEEP_MARKERS_LINES)
     else:
         blocks.append(MARKERS_BLOCK)
     blocks.append(BODY_FITTED_OUTPUT_BLOCK.format(geometry_type=geometry_type))

@@ -1,8 +1,9 @@
 """Write the reference coordinates of the golden grids (tests/test_golden.py checks them).
 
 The golden grids are the constant-height grids of the frozen configs next to this
-script. Their grids must not change by accident, so rerun this script only for a
-deliberate change, and say why in the commit:
+script, and one shock-line grid (its shock curve next to it, as *_shock.csv). Their
+grids must not change by accident, so rerun this script only for a deliberate
+change, and say why in the commit:
 
     python tests/golden/make_golden.py
 

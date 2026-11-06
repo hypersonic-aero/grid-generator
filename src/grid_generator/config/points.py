@@ -1,4 +1,4 @@
-"""[points] and [span] tables of a body-fitted grid config, turned into distribution specs.
+"""[points] tables of a body-fitted grid config, turned into distribution specs.
 
 The tables use the same distribution types and keys as the Cartesian axes, without
 start and end: those come from the geometry and [domain]. The body starts at the
@@ -27,28 +27,6 @@ from grid_generator.distributions.parse import parse_distribution
 # --------------------------------------------------
 # public API
 # --------------------------------------------------
-def parse_span(value: object) -> object:
-    """Turn a raw [span] table into a distribution spec (same rules as a Cartesian axis).
-
-    Args:
-        value: Raw [span] table, or anything else (None, an existing spec), which
-            passes through unchanged.
-
-    Returns:
-        Distribution spec for a table, otherwise value unchanged.
-
-    Raises:
-        ValueError: If the table is invalid.
-    """
-
-    # tables come from TOML; anything else (None, an existing spec) passes through
-    span = value
-    if isinstance(value, dict):
-        span = parse_table(value, "span")
-
-    return span
-
-
 def parse_table(table: dict[str, Any], label: str) -> DistributionSpec:
     """Parse one distribution table, with the table name on every error.
 
@@ -249,11 +227,17 @@ def build_shock_layer_spec(
 ) -> VinokurSpec:
     """Points of one line from the wall (0) to the shock (height): two-sided stretching.
 
-    The spacing at the shock is end_spacing_fraction x height. The wall spacing is
-    first_spacing, lowered on a line too short for it: a two-sided stretching keeps
-    its cells finest at the ends only while sqrt(wall spacing x shock spacing) stays
-    within the uniform spacing h = height / (n_points - 1), so the wall spacing is
-    at most h^2 / (shock spacing).
+    The wall spacing is first_spacing and the spacing at the shock end_spacing_fraction
+    x height. A two-sided stretching keeps its cells finest at the ends only while
+    sqrt(wall spacing x shock spacing) stays within the uniform spacing
+    h = height / (n_points - 1). On a line too short for both, the shock end gives
+    way, not the wall (whose spacing the boundary layer and the wall heat flux
+    need):
+
+    1. the shock spacing is lowered to h^2 / first_spacing;
+    2. only on a line shorter than (n_points - 1) x first_spacing, which can't hold
+       cells of first_spacing at all, the wall spacing becomes h too (uniform cells
+       of h, the largest wall spacing that fits).
 
     Args:
         n_points: Points from the wall to the shock, both included.
@@ -273,8 +257,12 @@ def build_shock_layer_spec(
 
     # wall spacing: the configured one, or the largest that fits on this line
     uniform_spacing = height / (n_points - 1)
-    largest_wall_spacing = uniform_spacing**2 / end_spacing
-    wall_spacing = min(first_spacing, largest_wall_spacing)
+    wall_spacing = min(first_spacing, uniform_spacing)
+
+    # shock spacing: lowered on a line too short for both end spacings, so the wall
+    # keeps its spacing (sqrt(wall x shock spacing) at most the uniform spacing)
+    largest_end_spacing = uniform_spacing**2 / wall_spacing
+    end_spacing = min(end_spacing, largest_end_spacing)
 
     # build, with the table name on every error
     try:

@@ -5,12 +5,14 @@
 # --------------------------------------------------
 from __future__ import annotations
 
+import json
 import tomllib
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
+from grid_generator import __version__
 from grid_generator.body_fitted import generate_body_fitted
 from grid_generator.cli.examples_command import build_examples_command, list_examples
 from grid_generator.cli.help_text import format_examples
@@ -22,7 +24,8 @@ from grid_generator.config import (
 )
 from grid_generator.config.body_fitted import AXISYMMETRIC_TYPES
 from grid_generator.config.templates import DEFAULT_BODY, DEFAULT_NORMAL
-from grid_generator.quality import grid_quality, shock_line_quality
+from grid_generator.quality import grid_quality, shock_line_quality, sweep_quality
+from grid_generator.sweep import sweep_transform
 
 # --------------------------------------------------
 # registry: one command group per geometry type
@@ -52,18 +55,18 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
         Typer app to register as `grid-generator <geometry_type>`.
     """
 
-    # examples shown under the group's help (--span only for planar bodies)
+    # examples shown under the group's help (--sweep revolves or extrudes, by body)
     planar = geometry_type not in AXISYMMETRIC_TYPES
+    sweep_text = "extruded along z (3D)" if planar else "revolved into a sector (3D)"
     command = f"grid-generator {geometry_type}"
     examples = [
         (f"{command} init", "defaults"),
         (f"{command} init --body segmented", "segmented body"),
         (f"{command} init --normal tanh", "tanh wall-normal"),
         (f"{command} init --shock", "shock-line grid (needs a shock curve)"),
+        (f"{command} init --sweep", sweep_text),
+        (f"{command} run -c {geometry_type}.toml", "generate the grid"),
     ]
-    if planar:
-        examples.append((f"{command} init --span", "extruded in z (3D)"))
-    examples.append((f"{command} run -c {geometry_type}.toml", "generate the grid"))
 
     # command group
     geometry_app = typer.Typer(
@@ -75,8 +78,7 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
     default_config = Path(f"{geometry_type}.toml")
 
     # init summary names its options, so they show in the command list
-    init_options = "--body, --normal, --span, --shock" if planar else "--body, --normal, --shock"
-    init_help = f"Create a starter configuration ({init_options})."
+    init_help = "Create a starter configuration (--body, --normal, --shock, --sweep)."
 
     # init: write the starter configuration for this geometry
     @geometry_app.command("init", help=init_help)
@@ -102,12 +104,15 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
                 )
             ),
         ] = None,
-        span: Annotated[
+        sweep: Annotated[
             bool,
             typer.Option(
-                "--span",
-                # the backslash keeps the help formatter from reading [span] as markup
-                help="Add a \\[span] table: extrude the grid in z (3D).",
+                "--sweep",
+                # the backslash keeps the help formatter from reading [sweep] as markup
+                help=(
+                    "Add a \\[sweep] table: 3D grid, revolved into a sector (cone, "
+                    "tangent-ogive) or extruded along z (plate, wedge)."
+                ),
             ),
         ] = False,
         shock: Annotated[
@@ -134,12 +139,6 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
                 err=True,
             )
             raise typer.Exit(code=1)
-        if span and geometry_type in AXISYMMETRIC_TYPES:
-            typer.echo(
-                f"error: --span extrudes planar bodies; a {geometry_type} is axisymmetric",
-                err=True,
-            )
-            raise typer.Exit(code=1)
 
         # protect existing user configuration unless overwrite was requested
         if output.exists() and not force:
@@ -148,7 +147,7 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
 
         # write and validate the starter configuration
         template = body_fitted_template(
-            geometry_type, body=body, normal=normal, span=span, shock=shock
+            geometry_type, body=body, normal=normal, sweep=sweep, shock=shock
         )
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(template, encoding="utf-8")
@@ -170,7 +169,7 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
         """Generate the grid from a configuration."""
 
         try:
-            from cfd_io import StructuredGrid, write_file
+            from cfd_io import Dataset, StructuredGrid, write_file
             from cfd_io.writers.gmsh import write_gmsh
 
             # read and validate (pydantic's ValidationError is a ValueError)
@@ -179,7 +178,7 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
             # generate
             dataset = generate_body_fitted(body_fitted_config)
 
-            # measure the first z-plane (an extruded grid has the same plane at every z)
+            # measure the plane k = 0 (a swept grid's first plane is the 2D grid)
             grid = dataset.grid
             plane = StructuredGrid(x=grid.x[:, :, :1], y=grid.y[:, :, :1], z=grid.z[:, :, :1])
             quality = grid_quality(plane)
@@ -188,8 +187,35 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
             shock_line_j = dataset.attrs.get("shock_line_j")
             shock_quality = None
             if shock_line_j is not None:
-                wall_spacing = body_fitted_config.points.shock_layer.first_spacing
-                shock_quality = shock_line_quality(plane, shock_line_j, wall_spacing)
+                shock_layer = body_fitted_config.points.shock_layer
+                shock_quality = shock_line_quality(
+                    plane,
+                    shock_line_j,
+                    shock_layer.first_spacing,
+                    shock_layer.end_spacing_fraction,
+                )
+
+            # swept grids: the cells in 3D, the axis, and the side faces
+            scale = body_fitted_config.output.scale
+            sweep_report = None
+            transform = None
+            markers = dataset.attrs["markers"]["structured"]
+            if body_fitted_config.sweep is not None:
+                transform = sweep_transform(body_fitted_config.sweep)
+                sweep_report = sweep_quality(
+                    grid, transform, markers["kmin"], markers["kmax"], scale
+                )
+
+            # coordinates in the file's units ([output] scale; the report stays in metres)
+            written = dataset
+            if scale != 1.0:
+                scaled_grid = StructuredGrid(x=scale * grid.x, y=scale * grid.y, z=scale * grid.z)
+                scaled_attrs = dict(dataset.attrs, coordinate_scale=scale)
+                if transform is not None:
+                    scaled_attrs["sweep"] = transform.as_dict(
+                        markers["kmin"], markers["kmax"], scale
+                    )
+                written = Dataset(grid=scaled_grid, attrs=scaled_attrs)
 
             # write: Gmsh gets the element order, which the file extension can't carry;
             # everything else by extension, in double precision (cfd-io's HDF5 default is float32)
@@ -197,10 +223,21 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
             output_file.parent.mkdir(parents=True, exist_ok=True)
             if output_file.suffix.lower() == ".msh":
                 output_path = write_gmsh(
-                    output_file, dataset, order=body_fitted_config.output.order
+                    output_file, written, order=body_fitted_config.output.order
                 )
             else:
-                output_path = write_file(output_file, dataset, dtype="f8")
+                output_path = write_file(output_file, written, dtype="f8")
+
+            # every grid: its description as JSON next to it, for formats that can't carry
+            # it (shock line j_s, side-face transform and solver lines, markers, scale)
+            metadata = {
+                "grid_file": Path(output_path).name,
+                "grid_generator_version": __version__,
+            }
+            metadata.update(written.attrs)
+            metadata["coordinate_scale"] = scale
+            metadata_path = output_file.with_suffix(".grid.json")
+            metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
         except (ImportError, OSError, TypeError, ValueError, tomllib.TOMLDecodeError) as error:
             typer.echo(f"error: {error}", err=True)
             raise typer.Exit(code=1) from None
@@ -215,11 +252,14 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
             cells = f"{ni - 1} x {nj - 1} cells"
         typer.echo(f"Generated {geometry_type} grid: {points} ({cells})")
         if nk > 1:
-            typer.echo("  quality of the (x, y) plane, the same at every z:")
+            typer.echo("  quality of the plane k = 0 (the 2D grid):")
         typer.echo(quality.summary())
         if shock_quality is not None:
             typer.echo(shock_quality.summary())
+        if sweep_report is not None:
+            typer.echo(sweep_report.summary())
         typer.echo(f"Wrote: {output_path}")
+        typer.echo(f"Wrote: {metadata_path}")
 
     # examples: bundled cases, copied into ./<name>/ to run (only types that ship some)
     if list_examples(geometry_type):

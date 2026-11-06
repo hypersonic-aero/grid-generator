@@ -67,8 +67,12 @@ class MarkersConfig(MarkerNames):
     outflow: str = Field(default="outflow", description="Outflow plane at x_end")
     wall: str = Field(default="wall", description="The body")
     outer: str = Field(default="farfield", description="Outer boundary")
-    span_min: str = Field(default="span_min", description="First z-plane, with [span]")
-    span_max: str = Field(default="span_max", description="Last z-plane, with [span]")
+    sweep_low: str = Field(
+        default="sweep_low", description="Side face k = 0 (the 2D plane), with [sweep]"
+    )
+    sweep_high: str = Field(
+        default="sweep_high", description="Side face k = n_points - 1, with [sweep]"
+    )
 
 
 # --------------------------------------------------

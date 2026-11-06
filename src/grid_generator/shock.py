@@ -62,6 +62,10 @@ _AXIS_GAP_LIMIT = 0.1
 # points the axis continuation is fitted through (x = a + b y^2)
 _AXIS_FIT_POINTS = 5
 
+# a curve starting farther from the axis than this many of its own point spacings has
+# lost points there (cell-centre data starts half a spacing away; one missed line, 1.5)
+_AXIS_GAP_SPACINGS = 2.0
+
 
 # --------------------------------------------------
 # public API
@@ -131,7 +135,8 @@ def start_on_axis(
 
     Raises:
         ValueError: If the curve starts farther from the axis than a tenth of the nose
-            radius (more than the half cell of cell-centre data), or below it.
+            radius (more than the half cell of cell-centre data), or more than two of
+            its own point spacings near the axis (points missing there), or below it.
     """
 
     # on the axis already: nothing to do
@@ -147,8 +152,20 @@ def start_on_axis(
             "off, from cell-centre data), to be continued there"
         )
 
-    # fit x = a + b y^2 through the first points: a is where the curve meets the axis
+    # check: within a couple of the curve's own point spacings near the axis (the mean
+    # over the points the continuation is fitted through), so no points are missing there
     n_fit = min(_AXIS_FIT_POINTS, shock_x.size)
+    fit_arc = np.sum(np.hypot(np.diff(shock_x[:n_fit]), np.diff(shock_y[:n_fit])))
+    point_spacing = float(fit_arc) / (n_fit - 1)
+    if first_y > _AXIS_GAP_SPACINGS * point_spacing:
+        raise ValueError(
+            f"the shock curve starts at y = {first_y:.4g} m, {first_y / point_spacing:.3g} of "
+            f"its point spacings ({point_spacing:.4g} m) above the axis; a curve from "
+            "cell-centre data starts half a spacing away, so points are missing near the "
+            f"axis: give the curve from y = 0, or within {_AXIS_GAP_SPACINGS:g} spacings of it"
+        )
+
+    # fit x = a + b y^2 through the first points: a is where the curve meets the axis
     y_fit = shock_y[:n_fit]
     x_fit = shock_x[:n_fit]
     matrix = np.column_stack([np.ones(n_fit), y_fit**2])
@@ -202,6 +219,20 @@ def points_on_curve(
 
     # even out the spacing between neighbouring crossings, keeping both ends
     arc_smooth = smooth_spacing(arc)
+
+    # report how far that moved the points along the curve, in point spacings (the
+    # lines bend toward the moved points; visible with --verbose)
+    moved = np.abs(arc_smooth - arc)
+    moved_spacings = moved / np.gradient(arc_smooth)
+    i_most = int(np.argmax(moved_spacings))
+    logger.info(
+        "%s: smoothing the point spacing moved the points by up to %.3g spacings "
+        "(%.3g m along the curve, grid line i = %d)",
+        curve_name,
+        moved_spacings[i_most],
+        moved[i_most],
+        i_most,
+    )
 
     # the points at those arc lengths
     curve_arc = _cumulative_arc_length(curve_x, curve_y)

@@ -11,8 +11,9 @@ The [points] tables use the same distribution types and keys as the Cartesian ax
 without start and end: those come from the geometry and [domain]. The body starts at
 the nose spacing, so the wall spacing is continuous across the junction.
 
-An optional [span] table extrudes the 2D grid in z into a 3D grid (plate and wedge
-only). It takes the same distribution types and keys as the Cartesian axes.
+An optional [sweep] table makes a 3D grid from the 2D one: revolved about the x-axis
+into a sector (cone, tangent ogive), or extruded along z (plate, wedge); see
+grid_generator.sweep.
 
 The grid reaches either a constant height from the wall ([domain] height, with the
 wall-normal points in [points.normal]), or it is a shock-line grid ([shock]: a shock
@@ -34,7 +35,6 @@ from canonical_geometries import Profile2D
 from canonical_geometries.config import GeometryConfig
 from pydantic import (
     BaseModel,
-    BeforeValidator,
     ConfigDict,
     Field,
     model_validator,
@@ -46,7 +46,6 @@ from grid_generator.config.points import (
     build_freestream_spec,
     build_normal_spec,
     build_shock_layer_spec,
-    parse_span,
 )
 from grid_generator.distributions.generate import build_distribution
 from grid_generator.distributions.models import DistributionSpec, GeometricSpec, VinokurSpec
@@ -67,10 +66,11 @@ EXTENT_KEYS = {
     "tangent-ogive": "cylinder_length",
 }
 
-# [markers] keys that only apply to an extruded grid
-SPAN_MARKER_KEYS = ("span_min", "span_max")
+# [markers] keys that only apply to a swept (3D) grid
+SWEEP_MARKER_KEYS = ("sweep_low", "sweep_high")
 
-# axisymmetric bodies: the grid is the meridian plane, and [span] doesn't apply
+# axisymmetric bodies: the grid is the meridian plane; [sweep] revolves it (the
+# others, planar, are extruded)
 AXISYMMETRIC_TYPES = {"cone", "tangent-ogive"}
 
 
@@ -124,6 +124,31 @@ class ShockConfig(BaseModel):
         return self
 
 
+class RevolveConfig(BaseModel):
+    """[sweep] type = "revolve": the meridian plane turned about the x-axis into a sector.
+
+    The sector runs from the plane z = 0 (the 2D grid) toward +z, in equal angle steps.
+    """
+
+    # reject misspelled keys
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["revolve"] = Field(description="Revolve about the x-axis (cone, tangent ogive)")
+    angle_deg: float = Field(gt=0.0, lt=360.0, description="Sector angle [deg]")
+    n_points: int = Field(ge=2, description="Points in the angle, both side faces included")
+
+
+class ExtrudeConfig(BaseModel):
+    """[sweep] type = "extrude": the plane repeated along z, from 0 to width, equally spaced."""
+
+    # reject misspelled keys
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["extrude"] = Field(description="Extrude along z (plate, wedge)")
+    width: float = Field(gt=0.0, description="Span in z [m]")
+    n_points: int = Field(ge=2, description="Points in z, both side faces included")
+
+
 class NosePointsConfig(BaseModel):
     """Points on the nose arc, equally spaced in angle (a polar block around the nose)."""
 
@@ -138,8 +163,9 @@ class ShockLayerPointsConfig(BaseModel):
 
     The wall spacing is a length (the boundary layer needs a physical size); the
     spacing at the shock is a fraction of each line's wall-to-shock distance (the
-    shock layer's size). On lines too short for the wall spacing (near a small nose)
-    the wall spacing is lowered to fit.
+    shock layer's size). On lines too short for both (near a small nose) the spacing
+    at the shock is lowered, so the wall keeps its spacing; only a line shorter than
+    (n_points - 1) x first_spacing gets uniform cells, finer than first_spacing.
     """
 
     # reject misspelled keys
@@ -202,7 +228,15 @@ class OutputConfig(BaseModel):
     filename: Path = Field(description="Grid file; the extension picks the format via cfd-io")
     order: Literal[1, 2] = Field(
         default=1,
-        description="Element order for .msh: 1 (4-node quads) or 2 (curved 9-node quads)",
+        description=(
+            "Element order for .msh: 1 (straight-edged elements) or 2 (curved 9-node quads, "
+            "27-node hexahedra)"
+        ),
+    )
+    scale: float = Field(
+        default=1.0,
+        gt=0.0,
+        description="Factor on the coordinates in the file (1000: millimetres)",
     )
 
     @model_validator(mode="after")
@@ -230,7 +264,7 @@ class BodyFittedConfig(BaseModel):
     domain: DomainConfig
     points: PointsConfig
     output: OutputConfig
-    span: Annotated[DistributionSpec | None, BeforeValidator(parse_span)] = None
+    sweep: Annotated[RevolveConfig | ExtrudeConfig, Field(discriminator="type")] | None = None
     markers: MarkersConfig = Field(default_factory=MarkersConfig)
     shock: ShockConfig | None = None
 
@@ -352,6 +386,8 @@ class BodyFittedConfig(BaseModel):
             # (shock-line grids get their line lengths from the shock; the counts are fixed)
             point_counts["points.shock_layer"] = self.points.shock_layer.n_points
             point_counts["points.freestream"] = self.points.freestream.n_points
+        if self.sweep is not None:
+            point_counts["sweep"] = self.sweep.n_points
         for label, spec in specs.items():
             try:
                 coordinates = build_distribution(spec)
@@ -375,40 +411,41 @@ class BodyFittedConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _check_span_fits_the_geometry_and_format(self) -> BodyFittedConfig:
-        """Check [span] is only used on planar bodies and with a format that holds 3D grids."""
+    def _check_sweep_fits_the_geometry_and_format(self) -> BodyFittedConfig:
+        """Check [sweep] suits the body (revolve or extrude) and the file holds the grid."""
 
-        # check: axisymmetric bodies get their 3D grid from revolving, not extruding
+        # check: axisymmetric bodies are revolved, planar ones extruded
         geometry_type = self.geometry.type
-        if self.span is not None and geometry_type in AXISYMMETRIC_TYPES:
+        sweep = self.sweep
+        axisymmetric = geometry_type in AXISYMMETRIC_TYPES
+        if sweep is not None and axisymmetric and sweep.type != "revolve":
             raise ValueError(
-                f"[span] extrudes planar bodies (plate, wedge) in z; a {geometry_type} is "
-                "axisymmetric and its 3D grid would be revolved, which isn't supported yet"
+                f"a {geometry_type} is axisymmetric: its 3D grid is revolved, [sweep] "
+                f'type = "revolve"'
+            )
+        if sweep is not None and not axisymmetric and sweep.type != "extrude":
+            raise ValueError(
+                f'a {geometry_type} is planar: its 3D grid is extruded, [sweep] type = "extrude"'
             )
 
-        # check: span marker names only with a span to name
-        span_names_given = [key for key in SPAN_MARKER_KEYS if key in self.markers.model_fields_set]
-        if self.span is None and span_names_given:
+        # check: side face names only with a sweep to name
+        sweep_names_given = [
+            key for key in SWEEP_MARKER_KEYS if key in self.markers.model_fields_set
+        ]
+        if sweep is None and sweep_names_given:
             raise ValueError(
-                f"[markers] {', '.join(span_names_given)} only apply with a [span] table"
-            )
-
-        # check: the Gmsh writer is 2D only
-        suffix = self.output.filename.suffix.lower()
-        if self.span is not None and suffix == ".msh":
-            raise ValueError(
-                "[span] makes a 3D grid, but .msh (Gmsh) output is 2D only; "
-                "use .su2, .h5 or .p3dfmt"
+                f"[markers] {', '.join(sweep_names_given)} only apply with a [sweep] table"
             )
 
         # check: the Plot3D ASCII extension matches the grid's dimensionality
-        if self.span is not None and suffix == PLOT3D_2D_SUFFIX:
+        suffix = self.output.filename.suffix.lower()
+        if sweep is not None and suffix == PLOT3D_2D_SUFFIX:
             raise ValueError(
-                f"[span] makes a 3D grid; use {PLOT3D_3D_SUFFIX} instead of {PLOT3D_2D_SUFFIX}"
+                f"[sweep] makes a 3D grid; use {PLOT3D_3D_SUFFIX} instead of {PLOT3D_2D_SUFFIX}"
             )
-        if self.span is None and suffix == PLOT3D_3D_SUFFIX:
+        if sweep is None and suffix == PLOT3D_3D_SUFFIX:
             raise ValueError(
-                f"without [span] the grid is 2D; use {PLOT3D_2D_SUFFIX} instead of "
+                f"without [sweep] the grid is 2D; use {PLOT3D_2D_SUFFIX} instead of "
                 f"{PLOT3D_3D_SUFFIX}"
             )
 
@@ -481,8 +518,10 @@ class BodyFittedConfig(BaseModel):
             height: Wall-to-shock distance of this line [m].
 
         Returns:
-            Two-sided distribution in wall distance [m]; its first_spacing is below
-            [points.shock_layer] first_spacing on lines too short for that.
+            Two-sided distribution in wall distance [m]. On lines too short for both
+            end spacings its end_spacing is below end_spacing_fraction x height; its
+            first_spacing is below [points.shock_layer] first_spacing only on lines
+            shorter than (n_points - 1) x first_spacing.
 
         Raises:
             ValueError: If the grid isn't a shock-line one, or the line can't hold the

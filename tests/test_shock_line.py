@@ -5,16 +5,20 @@
 # --------------------------------------------------
 from __future__ import annotations
 
+import json
 import logging
 import math
 from pathlib import Path
 
 import numpy as np
 import pytest
+from cfd_io import StructuredGrid
 from typer.testing import CliRunner
 
 from grid_generator import generate_body_fitted, load_body_fitted_config
 from grid_generator.cli import app
+from grid_generator.config.points import build_shock_layer_spec
+from grid_generator.distributions import build_distribution
 from grid_generator.quality import folded_cells, shock_line_quality
 from grid_generator.shock import start_on_axis
 
@@ -239,31 +243,104 @@ def test_shock_line_grid_keeps_the_first_spacing_and_has_no_folded_cells(tmp_pat
     assert not np.any(folded_cells(x, y))
 
 
-def test_the_wall_spacing_is_lowered_on_lines_too_short_for_it(tmp_path: Path) -> None:
-    """A wall spacing too coarse for the nose lines is lowered there, and kept downstream.
+def test_the_shock_layer_spec_keeps_the_wall_spacing_on_short_lines() -> None:
+    """On a line too short for both end spacings the shock end gives way, not the wall.
 
-    With 61 points and a shock spacing of 2 % of the line, the wall spacing fits up to
-    (d / 60)^2 / (0.02 d) = d / 72: below 10 um on the 0.4 mm nose lines, above it on
-    the body lines (d of a few mm).
+    201 points, 1 um at the wall, 2 % at the shock: a 10 mm line holds both; a 0.5 mm
+    line (h = 2.5 um) can't (sqrt(1 um x 10 um) > h), so its shock spacing becomes
+    h^2 / 1 um = 6.25 um; a 0.195 mm line (h = 0.975 um) can't hold 1 um cells at all,
+    so its cells are uniform.
     """
 
-    # generate with a 10 um wall spacing
-    coarse_points = SHOCK_LINE_POINTS.replace(
-        f"first_spacing = {FIRST_SPACING}", "first_spacing = 1.0e-5"
+    # long line: both spacings as configured
+    long_spec = build_shock_layer_spec(201, 1.0e-6, 0.02, 10.0e-3)
+    assert long_spec.first_spacing == 1.0e-6
+    assert long_spec.end_spacing == pytest.approx(0.02 * 10.0e-3, rel=1.0e-15)
+
+    # short line: the wall keeps its spacing, the shock spacing gives way
+    short_spec = build_shock_layer_spec(201, 1.0e-6, 0.02, 0.5e-3)
+    assert short_spec.first_spacing == 1.0e-6
+    assert short_spec.end_spacing == pytest.approx((0.5e-3 / 200) ** 2 / 1.0e-6, rel=1.0e-12)
+
+    # shorter than 200 x 1 um: uniform cells, the largest wall spacing that fits
+    uniform_spec = build_shock_layer_spec(201, 1.0e-6, 0.02, 0.195e-3)
+    uniform = 0.195e-3 / 200
+    assert uniform_spec.first_spacing == pytest.approx(uniform, rel=1.0e-12)
+    assert uniform_spec.end_spacing == pytest.approx(uniform, rel=1.0e-12)
+    np.testing.assert_allclose(np.diff(build_distribution(uniform_spec)), uniform, rtol=1.0e-9)
+
+
+def test_on_short_lines_the_wall_keeps_its_spacing_and_the_shock_end_gives_way(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Three kinds of line, from 201 points with 3 um at the wall and 2 % at the shock.
+
+    Lines shorter than 200 x 3 um = 0.6 mm (the nose, from 0.4 mm) get uniform cells;
+    lines up to 200^2 x 3 um x 2 % = 2.4 mm keep the 3 um at the wall and get a
+    smaller spacing at the shock; longer lines get both spacings as configured. On
+    every line the cells grow from both ends toward the middle, or monotonically
+    from one end to the other: they never shrink toward the middle.
+    """
+
+    # generate with 201 points and a 3 um wall spacing
+    n_points = 201
+    wall_spacing = 3.0e-6
+    points = SHOCK_LINE_POINTS.replace(
+        f"n_points = {N_SHOCK_LAYER}", f"n_points = {n_points}"
+    ).replace(f"first_spacing = {FIRST_SPACING}", f"first_spacing = {wall_spacing}")
+    with caplog.at_level(logging.INFO, logger="grid_generator"):
+        x, y, attrs = shock_line_grid(tmp_path, normal_points=points)
+    j_s = attrs["shock_line_j"]
+    assert j_s == n_points - 1
+
+    # every line's cells from the wall to the shock, measured along its wall normal (the
+    # direction [points.shock_layer] spaces the points in; the line bends across it)
+    first_x = x[:, 1] - x[:, 0]
+    first_y = y[:, 1] - y[:, 0]
+    first = np.hypot(first_x, first_y)
+    normal_x = (first_x / first)[:, None]
+    normal_y = (first_y / first)[:, None]
+    cells = (
+        np.diff(x[:, : j_s + 1], axis=1) * normal_x + np.diff(y[:, : j_s + 1], axis=1) * normal_y
     )
-    x, y, _ = shock_line_grid(tmp_path, normal_points=coarse_points)
+    height = cells.sum(axis=1)
+    uniform = height / (n_points - 1)
 
-    # wall spacing and wall-to-shock distance of every line
-    j_s = N_SHOCK_LAYER - 1
-    first = np.hypot(x[:, 1] - x[:, 0], y[:, 1] - y[:, 0])
-    shock_distance = np.hypot(x[:, j_s] - x[:, 0], y[:, j_s] - y[:, 0])
-    largest = shock_distance / ((N_SHOCK_LAYER - 1) ** 2 * END_SPACING_FRACTION)
+    # the three kinds of line
+    is_uniform = height < (n_points - 1) * wall_spacing
+    is_lowered = ~is_uniform & (height < (n_points - 1) ** 2 * wall_spacing * END_SPACING_FRACTION)
+    is_long = ~is_uniform & ~is_lowered
+    assert is_uniform.any() and is_lowered.any() and is_long.any()
 
-    # check: lowered at the nose, the configured one far downstream, never above the limit
-    assert first[0] < 1.0e-5
-    np.testing.assert_allclose(first[-1], 1.0e-5, rtol=1.0e-8)
-    assert np.all(first <= np.minimum(largest, 1.0e-5) * (1.0 + 1.0e-3))
+    # check: uniform cells on the shortest lines
+    np.testing.assert_allclose(cells[is_uniform] / uniform[is_uniform, None], 1.0, rtol=1.0e-5)
+
+    # check: the wall spacing kept on every other line
+    np.testing.assert_allclose(first[~is_uniform], wall_spacing, rtol=1.0e-8)
+
+    # check: the spacing at the shock lowered to h^2 / wall spacing, or as configured
+    shock_fraction = cells[:, -1] / height
+    lowered_fraction = uniform**2 / wall_spacing / height
+    np.testing.assert_allclose(
+        shock_fraction[is_lowered], lowered_fraction[is_lowered], rtol=1.0e-5
+    )
+    np.testing.assert_allclose(shock_fraction[is_long], END_SPACING_FRACTION, rtol=1.0e-5)
+
+    # check: no line has a cell smaller than a cell on each side of it
+    largest_before = np.maximum.accumulate(cells, axis=1)[:, :-2]
+    largest_after = np.maximum.accumulate(cells[:, ::-1], axis=1)[:, ::-1][:, 2:]
+    bound = np.minimum(largest_before, largest_after)
+    assert np.all(cells[:, 1:-1] >= bound * (1.0 - 1.0e-9))
     assert not np.any(folded_cells(x, y))
+
+    # check: the quality report counts the lines the generator lowered (and logged)
+    grid = StructuredGrid(x=x[:, :, None], y=y[:, :, None], z=np.zeros_like(x)[:, :, None])
+    report = shock_line_quality(grid, j_s, wall_spacing, END_SPACING_FRACTION)
+    assert report.lowered_wall_spacing == int(is_uniform.sum())
+    assert report.lowered_shock_spacing == int((is_uniform | is_lowered).sum())
+    assert f"first_spacing lowered on {report.lowered_wall_spacing} lines" in caplog.text
+    assert f"spacing at the shock lowered on {report.lowered_shock_spacing} lines" in caplog.text
+    assert report.min_wall_spacing == pytest.approx(uniform.min(), rel=1.0e-5)
 
 
 # --------------------------------------------------
@@ -556,7 +633,14 @@ def test_cli_run_reports_the_shock_line(tmp_path: Path, monkeypatch: pytest.Monk
     assert result.exit_code == 0, result.output
     assert f"shock line              j = {N_SHOCK_LAYER - 1}" in result.output
     assert "wall spacing lowered    0 lines" in result.output
+    assert "shock spacing lowered   0 lines" in result.output
     assert (tmp_path / "grid.h5").exists()
+
+    # check: the JSON next to the grid names the shock line, for formats without attributes
+    metadata = json.loads((tmp_path / "grid.grid.json").read_text(encoding="utf-8"))
+    assert metadata["shock_line_j"] == N_SHOCK_LAYER - 1
+    assert metadata["grid_file"] == "grid.h5"
+    assert metadata["markers"]["structured"]["jmin"] == "wall"
 
 
 @pytest.mark.parametrize("geometry_type", ["plate", "wedge", "cone", "tangent-ogive"])
@@ -652,6 +736,21 @@ def test_start_on_axis_refuses_a_curve_that_misses_the_axis() -> None:
         start_on_axis(x, y, NOSE_RADIUS)
 
 
+def test_start_on_axis_refuses_a_curve_with_points_missing_near_the_axis() -> None:
+    """Five point spacings off the axis (but within a tenth of the nose radius) is refused.
+
+    Cell-centre data starts half a spacing above the axis; a curve that starts several
+    spacings above it has lost points there, and the continuation would be a guess.
+    """
+
+    # points every 20 um, the first at 100 um (0.04 nose radii)
+    y = np.linspace(1.0e-4, 1.0e-3, 46)
+    x = -4.0e-4 + 120.0 * y**2
+
+    with pytest.raises(ValueError, match="points are missing near the axis"):
+        start_on_axis(x, y, NOSE_RADIUS)
+
+
 def test_a_shock_curve_off_the_axis_keeps_the_symmetry_line_on_it(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -684,7 +783,9 @@ def test_a_shock_curve_off_the_axis_keeps_the_symmetry_line_on_it(
     assert np.hypot(x_off - x_on, y_off - y_on).max() < 1.0e-3 * nose_cell
 
     # check: the quality report says so
-    report = shock_line_quality(dataset.grid, attrs["shock_line_j"], FIRST_SPACING)
+    report = shock_line_quality(
+        dataset.grid, attrs["shock_line_j"], FIRST_SPACING, END_SPACING_FRACTION
+    )
     assert report.axis_offset == 0.0
     assert "symmetry line off axis  0.000e+00 m" in report.summary()
 

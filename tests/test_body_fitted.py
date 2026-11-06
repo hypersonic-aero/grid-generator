@@ -44,13 +44,9 @@ FIRST_NORMAL_SPACING = 1.0e-6
 
 # the default boundary names per grid side ([markers] left at its defaults)
 BOUNDARY_MARKERS = {"imin": "symmetry", "imax": "outflow", "jmin": "wall", "jmax": "farfield"}
-SPAN_MARKERS = {"kmin": "span_min", "kmax": "span_max"}
 
-# the template's [span] table (init --span), and the same table with 5 z-planes
-SPAN_DEFAULT = '[span]\ntype = "equidistant"\nstart = 0.0\nend = 2.0e-3\nn_points = 21'
-SPAN_ON = '[span]\ntype = "equidistant"\nstart = 0.0\nend = 2.0e-3\nn_points = 5'
-SPAN_WIDTH = 2.0e-3
-N_SPAN = 5
+# a [sweep] table that extrudes (planar bodies only; see test_sweep.py for sweeps)
+EXTRUDE_TABLE = '[sweep]\ntype = "extrude"\nwidth = 2.0e-3\nn_points = 5'
 
 
 def write_config(tmp_path: Path, old: str = "", new: str = "") -> Path:
@@ -273,73 +269,7 @@ def test_cli_run_refuses_a_folded_grid(tmp_path: Path, monkeypatch: pytest.Monke
     assert not (tmp_path / "plate_local.su2").exists()
 
 
-# --------------------------------------------------
-# extrusion in z (span)
-# --------------------------------------------------
-def write_span_config(tmp_path: Path, old: str = "", new: str = "") -> Path:
-    """Write the template with [span] (5 z-planes), optionally with one more replacement."""
-
-    # template with the span, cut to 5 z-planes
-    config_text = body_fitted_template("plate", span=True)
-    assert SPAN_DEFAULT in config_text
-    config_text = config_text.replace(SPAN_DEFAULT, SPAN_ON)
-
-    # optional extra change
-    if old:
-        assert old in config_text
-        config_text = config_text.replace(old, new, 1)
-
-    # write
-    config_path = tmp_path / "plate.toml"
-    config_path.write_text(config_text)
-
-    return config_path
-
-
-def test_span_extrudes_the_plane(plate_config: BodyFittedConfig, tmp_path: Path) -> None:
-    """Every z-plane holds the 2D grid; z follows the span; the two z-planes get markers."""
-
-    # build the extruded grid and the 2D grid
-    span_dir = tmp_path / "span"
-    span_dir.mkdir()
-    dataset = generate_body_fitted(load_body_fitted_config(write_span_config(span_dir)))
-    grid = dataset.grid
-    plane = generate_body_fitted(plate_config).grid
-
-    # check the shape and the planes
-    assert grid.shape == (N_NOSE + N_BODY - 1, N_NORMAL, N_SPAN)
-    z_expected = np.linspace(0.0, SPAN_WIDTH, N_SPAN)
-    for k in range(N_SPAN):
-        np.testing.assert_array_equal(grid.x[:, :, k], plane.x[:, :, 0])
-        np.testing.assert_array_equal(grid.y[:, :, k], plane.y[:, :, 0])
-        np.testing.assert_allclose(grid.z[:, :, k], z_expected[k], rtol=1e-15)
-
-    # check the description
-    assert dataset.attrs["dimensionality"] == 3
-    assert dataset.attrs["markers"]["structured"] == BOUNDARY_MARKERS | SPAN_MARKERS
-
-
-@pytest.mark.parametrize(
-    ("old", "new", "message"),
-    [
-        ("n_points = 5", "n_point = 5", r"unknown \[span\] fields"),
-        ("end = 2.0e-3\nn_points = 5", "end = -1.0\nn_points = 5", "end must be greater"),
-        ('filename = "plate_local.su2"', 'filename = "plate_local.msh"', "2D only"),
-        ('filename = "plate_local.su2"', 'filename = "plate_local.p2dfmt"', ".p3dfmt"),
-        ('type = "plate"', 'type = "cone"\nhalf_angle = 7.0', "axisymmetric"),
-    ],
-)
-def test_load_rejects_bad_span(tmp_path: Path, old: str, new: str, message: str) -> None:
-    """Bad span tables, 2D-only output formats and cones are rejected."""
-
-    # write a broken config
-    config_path = write_span_config(tmp_path, old, new)
-
-    with pytest.raises(ValueError, match=message):
-        load_body_fitted_config(config_path)
-
-
-def test_load_rejects_p3dfmt_without_span(tmp_path: Path) -> None:
+def test_load_rejects_p3dfmt_without_sweep(tmp_path: Path) -> None:
     """A 2D grid can't go to a .p3dfmt file (the extension names the dimensionality)."""
 
     # write a 2D config with the 3D extension
@@ -608,13 +538,13 @@ def test_ogive_grid_continues_on_a_cylinder_past_the_base(tmp_path: Path) -> Non
         ),
         ((("length = 0.5\n", ""),), "length"),
         ((("x_end = 0.01", "x_end = 50.0e-6"),), "must reach past the nose"),
-        ((("order = 1\n", "order = 1\n\n" + SPAN_ON + "\n"),), "axisymmetric"),
+        ((("scale = 1.0\n", "scale = 1.0\n\n" + EXTRUDE_TABLE + "\n"),), "axisymmetric"),
     ],
 )
 def test_load_rejects_bad_ogive_config(
     tmp_path: Path, replacements: tuple[tuple[str, str], ...], message: str
 ) -> None:
-    """cylinder_length comes from x_end, length is required, x_end must pass the nose, no span."""
+    """cylinder_length comes from x_end, length is required, x_end must pass the nose, no extrusion."""
 
     # write a broken config
     config_path = write_template(tmp_path, "tangent-ogive", replacements)
@@ -648,26 +578,9 @@ def test_cli_init_options_write_runnable_configs(
     assert f'[points.normal]\ntype = "{normal}"' in config_text
 
 
-@pytest.mark.parametrize("geometry_type", ["plate", "wedge"])
-def test_cli_init_span_writes_a_3d_config(tmp_path: Path, geometry_type: str) -> None:
-    """init --span adds the [span] table; the config runs into a 3D grid."""
-
-    # init with --span, then run
-    config_path = tmp_path / f"{geometry_type}.toml"
-    runner.invoke(app, [geometry_type, "init", "-o", str(config_path), "--span"])
-    result = runner.invoke(app, [geometry_type, "run", "-c", str(config_path)])
-
-    # check
-    assert result.exit_code == 0, result.output
-    assert "x 21 points" in result.output
-    assert "--span" in config_path.read_text().splitlines()[0]
-
-
 @pytest.mark.parametrize(
     ("arguments", "message"),
     [
-        (["cone", "init", "--span"], "axisymmetric"),
-        (["tangent-ogive", "init", "--span"], "axisymmetric"),
         (["plate", "init", "--body", "tanh"], "--body must be one of"),
         (["plate", "init", "--normal", "cubic"], "--normal must be one of"),
     ],
@@ -752,21 +665,6 @@ def test_markers_rename_the_sides_in_the_su2_file(tmp_path: Path) -> None:
     assert marker_faces["farfield"] == (N_NOSE + N_BODY - 2) + (N_NORMAL - 1)
 
 
-def test_markers_name_the_span_sides(tmp_path: Path) -> None:
-    """With [span], span_min and span_max name the first and last z-plane."""
-
-    # template with the span; rename the span sides
-    config_text = body_fitted_template("plate", span=True)
-    config_text = config_text.replace('span_min = "span_min"', 'span_min = "periodic_a"')
-    config_text = config_text.replace('span_max = "span_max"', 'span_max = "periodic_b"')
-    config_path = tmp_path / "plate.toml"
-    config_path.write_text(config_text)
-
-    # check
-    markers = generate_body_fitted(config_path).attrs["markers"]["structured"]
-    assert (markers["kmin"], markers["kmax"]) == ("periodic_a", "periodic_b")
-
-
 @pytest.mark.parametrize(
     ("old", "new", "message"),
     [
@@ -774,11 +672,11 @@ def test_markers_name_the_span_sides(tmp_path: Path) -> None:
         ('wall = "wall"', 'wall = ""', "must be one word"),
         ('wall = "wall"', 'wall = "Fluid"', "reserved"),
         ('wall = "wall"', 'wal = "wall"', "wal"),
-        ('symmetry = "symmetry"', 'symmetry = "symmetry"\nspan_min = "a"', "only apply with a"),
+        ('symmetry = "symmetry"', 'symmetry = "symmetry"\nsweep_low = "a"', "only apply with a"),
     ],
 )
 def test_load_rejects_bad_markers(tmp_path: Path, old: str, new: str, message: str) -> None:
-    """Names with spaces, empty or reserved names, unknown keys, span names without a span."""
+    """Names with spaces, empty or reserved names, unknown keys, side face names without a sweep."""
 
     # write a broken config
     config_path = write_config(tmp_path, old, new)
@@ -925,49 +823,6 @@ def test_cli_run_rejects_a_config_for_another_geometry(tmp_path: Path) -> None:
     assert result.exit_code == 1
     assert "grid-generator plate run" in result.output
     assert not (tmp_path / "plate_local.su2").exists()
-
-
-def test_cli_span_writes_3d_su2_with_positive_volumes(tmp_path: Path) -> None:
-    """An extruded grid goes to SU2 as hexes with positive volume and six markers."""
-
-    # run
-    config_path = write_span_config(tmp_path)
-    result = runner.invoke(app, ["plate", "run", "-c", str(config_path)])
-    assert result.exit_code == 0, result.output
-    assert "201 x 101 x 5 points (200 x 100 x 4 cells)" in result.output
-
-    # read the header counts and markers
-    su2_lines = (tmp_path / "plate_local.su2").read_text().splitlines()
-    assert "NDIME= 3" in su2_lines
-    for marker in (BOUNDARY_MARKERS | SPAN_MARKERS).values():
-        assert f"MARKER_TAG= {marker}" in su2_lines
-
-    # read the hexes (type 12, eight node ids) and the points
-    elem_start = next(n for n, line in enumerate(su2_lines) if line.startswith("NELEM="))
-    n_elements = int(su2_lines[elem_start].split("=")[1])
-    hexes = np.array(
-        [
-            [int(v) for v in line.split()[1:9]]
-            for line in su2_lines[elem_start + 1 : elem_start + 1 + n_elements]
-        ]
-    )
-    point_start = next(n for n, line in enumerate(su2_lines) if line.startswith("NPOIN="))
-    n_points = int(su2_lines[point_start].split("=")[1].split()[0])
-    points = np.array(
-        [
-            [float(v) for v in line.split()[:3]]
-            for line in su2_lines[point_start + 1 : point_start + 1 + n_points]
-        ]
-    )
-
-    # check: corner Jacobian at node 0 (edges to nodes 1, 3, 4 run along +i, +j, +k)
-    corners = points[hexes]
-    edge_i = corners[:, 1] - corners[:, 0]
-    edge_j = corners[:, 3] - corners[:, 0]
-    edge_k = corners[:, 4] - corners[:, 0]
-    jacobian = np.einsum("ij,ij->i", edge_i, np.cross(edge_j, edge_k))
-    assert n_elements == 200 * 100 * 4
-    assert np.all(jacobian > 0.0)
 
 
 def test_cli_su2_reads_back_with_the_same_points(tmp_path: Path) -> None:
