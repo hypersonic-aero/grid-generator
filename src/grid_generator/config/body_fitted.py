@@ -1,4 +1,4 @@
-"""Configuration contract for constant-height body-fitted 2D grids.
+"""Configuration contract for body-fitted grids: constant height or shock-aligned, 2D or swept to 3D.
 
 The [geometry] table is canonical-geometries' contract, without the keys that only
 say how far the body extends: the grid's body ends at [domain] x_end. For plate,
@@ -16,8 +16,8 @@ into a sector (cone, tangent ogive), or extruded along z (plate, wedge); see
 grid_generator.sweep.
 
 The grid reaches either a constant height from the wall ([domain] height, with the
-wall-normal points in [points.normal]), or it is a shock-line grid ([shock]: a shock
-curve that becomes a grid line, and a margin beyond it). A shock-line grid's lines
+wall-normal points in [points.normal]), or it is a shock-aligned grid ([shock]: a shock
+curve that becomes a grid line, and a margin beyond it). A shock-aligned grid's lines
 run from the wall to the shock ([points.shock_layer]) and on to the outer boundary
 ([points.freestream]); see grid_generator.shock.
 """
@@ -92,7 +92,7 @@ class DomainConfig(BaseModel):
 
 
 class ShockConfig(BaseModel):
-    """Shock-line grid: a shock curve that becomes the grid line j = j_s, and a margin beyond it.
+    """Shock-aligned grid: a shock curve that becomes the grid line j = j_s, and a margin beyond it.
 
     The outer boundary lies margin_factor * d + min_offset from the wall, with d the
     wall-to-shock distance. A relative curve path is resolved against the config
@@ -159,7 +159,7 @@ class NosePointsConfig(BaseModel):
 
 
 class ShockLayerPointsConfig(BaseModel):
-    """Points from the wall to the shock line (shock-line grids): two-sided stretching.
+    """Points from the wall to the shock line (shock-aligned grids): two-sided stretching.
 
     The wall spacing is a length (the boundary layer needs a physical size); the
     spacing at the shock is a fraction of each line's wall-to-shock distance (the
@@ -184,7 +184,7 @@ class ShockLayerPointsConfig(BaseModel):
 
 
 class FreestreamPointsConfig(BaseModel):
-    """Points from the shock line to the outer boundary (shock-line grids): geometric growth.
+    """Points from the shock line to the outer boundary (shock-aligned grids): geometric growth.
 
     The first spacing is the shock layer's last one (automatic), so the spacing is
     continuous across the shock line.
@@ -306,7 +306,7 @@ class BodyFittedConfig(BaseModel):
     def _check_one_layout(self) -> BodyFittedConfig:
         """Constant height ([domain] height, [points.normal]) or a shock line ([shock], ...).
 
-        A shock-line grid takes [points.shock_layer] (wall to shock) and
+        A shock-aligned grid takes [points.shock_layer] (wall to shock) and
         [points.freestream] (shock to outer boundary) instead of [points.normal].
         """
 
@@ -329,7 +329,7 @@ class BodyFittedConfig(BaseModel):
         if has_shock:
             if points.normal is not None:
                 raise ValueError(
-                    "[points.normal] is for constant-height grids; a shock-line grid "
+                    "[points.normal] is for constant-height grids; a shock-aligned grid "
                     "([shock]) takes [points.shock_layer] (wall to shock) and "
                     "[points.freestream] (shock to outer boundary)"
                 )
@@ -339,7 +339,7 @@ class BodyFittedConfig(BaseModel):
             if points.freestream is None:
                 missing.append("[points.freestream] (shock to outer boundary)")
             if missing:
-                raise ValueError(f"a shock-line grid ([shock]) needs {' and '.join(missing)}")
+                raise ValueError(f"a shock-aligned grid ([shock]) needs {' and '.join(missing)}")
         else:
             shock_tables = []
             if points.shock_layer is not None:
@@ -348,7 +348,7 @@ class BodyFittedConfig(BaseModel):
                 shock_tables.append("[points.freestream]")
             if shock_tables:
                 raise ValueError(
-                    f"{' and '.join(shock_tables)} are for shock-line grids ([shock]); a "
+                    f"{' and '.join(shock_tables)} are for shock-aligned grids ([shock]); a "
                     "constant-height grid ([domain] height) takes [points.normal]"
                 )
             if points.normal is None:
@@ -383,7 +383,7 @@ class BodyFittedConfig(BaseModel):
         if self.shock is None:
             specs["points.normal"] = self.normal_distribution()
         else:
-            # (shock-line grids get their line lengths from the shock; the counts are fixed)
+            # (shock-aligned grids get their line lengths from the shock; the counts are fixed)
             point_counts["points.shock_layer"] = self.points.shock_layer.n_points
             point_counts["points.freestream"] = self.points.freestream.n_points
         if self.sweep is not None:
@@ -512,7 +512,7 @@ class BodyFittedConfig(BaseModel):
         return normal_spec
 
     def shock_layer_distribution(self, height: float) -> VinokurSpec:
-        """Points of one shock-line grid line from the wall (0) to the shock (height).
+        """Points of one shock-aligned grid line from the wall (0) to the shock (height).
 
         Args:
             height: Wall-to-shock distance of this line [m].
@@ -524,14 +524,14 @@ class BodyFittedConfig(BaseModel):
             shorter than (n_points - 1) x first_spacing.
 
         Raises:
-            ValueError: If the grid isn't a shock-line one, or the line can't hold the
+            ValueError: If the grid isn't a shock-aligned one, or the line can't hold the
                 two end cells.
         """
 
-        # validate: only shock-line grids have [points.shock_layer]
+        # validate: only shock-aligned grids have [points.shock_layer]
         table = self.points.shock_layer
         if table is None:
-            raise ValueError("[points.shock_layer] belongs to shock-line grids ([shock])")
+            raise ValueError("[points.shock_layer] belongs to shock-aligned grids ([shock])")
 
         # extract
         shock_layer_spec = build_shock_layer_spec(
@@ -541,7 +541,7 @@ class BodyFittedConfig(BaseModel):
         return shock_layer_spec
 
     def freestream_distribution(self, length: float, first_spacing: float) -> GeometricSpec:
-        """Points of one shock-line grid line from the shock (0) to the outer boundary (length).
+        """Points of one shock-aligned grid line from the shock (0) to the outer boundary (length).
 
         Args:
             length: Distance from the shock to the outer boundary along the line [m].
@@ -551,14 +551,14 @@ class BodyFittedConfig(BaseModel):
             Geometric distribution in distance from the shock [m].
 
         Raises:
-            ValueError: If the grid isn't a shock-line one, or the cells would shrink
+            ValueError: If the grid isn't a shock-aligned one, or the cells would shrink
                 toward the outer boundary.
         """
 
-        # validate: only shock-line grids have [points.freestream]
+        # validate: only shock-aligned grids have [points.freestream]
         table = self.points.freestream
         if table is None:
-            raise ValueError("[points.freestream] belongs to shock-line grids ([shock])")
+            raise ValueError("[points.freestream] belongs to shock-aligned grids ([shock])")
 
         # extract
         freestream_spec = build_freestream_spec(table.n_points, length, first_spacing)

@@ -1,4 +1,4 @@
-"""Constant-height body-fitted 2D grid generation.
+"""Body-fitted grids around blunt bodies: constant height or shock-aligned, 2D or swept to 3D.
 
 Wall points (i) run from the stagnation point, around the nose, along the body to
 x_end. Each j-line runs straight out along the exact wall normal to the same
@@ -13,7 +13,7 @@ the nose spacing, so the spacing is continuous across the junction. The body may
 straight (plate, wedge, cone) or curved (tangent ogive, with an optional cylinder).
 
 H is either constant ([domain] height, picked large enough to clear the bow shock),
-or the grid is a shock-line grid ([shock]): the bow shock is the grid line j = j_s
+or the grid is a shock-aligned grid ([shock]): the bow shock is the grid line j = j_s
 on every line, and the outer boundary is a smooth curve a margin beyond it (see
 grid_generator.shock). Each line is then built in two segments that meet on the
 shock. The first leaves the wall along the normal and bends toward the line's
@@ -101,7 +101,7 @@ def generate_body_fitted(source: BodyFittedConfig | str | Path) -> Dataset:
 
     Returns:
         Grid-only CFD dataset with shape (ni, nj, 1), or (ni, nj, nk) when swept, in
-        cfd-io's convention, with the boundary markers SU2 output needs. A shock-line
+        cfd-io's convention, with the boundary markers SU2 output needs. A shock-aligned
         grid also names its shock line: attrs["shock_line_j"] = j_s. A swept grid
         describes the transform between its side faces in attrs["sweep"].
 
@@ -187,7 +187,7 @@ def generate_body_fitted(source: BodyFittedConfig | str | Path) -> Dataset:
         "markers": {"structured": markers},
     }
 
-    # a shock-line grid names the grid line on the shock (for solvers and post-processing)
+    # a shock-aligned grid names the grid line on the shock (for solvers and post-processing)
     if config.shock is not None:
         attrs["shock_line_j"] = config.points.shock_layer.n_points - 1
 
@@ -288,7 +288,7 @@ def _shock_line_grid(
     nx: NDArray[np.float64],
     ny: NDArray[np.float64],
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """The j-lines of a shock-line grid: wall to shock point (j = j_s) to outer point.
+    """The j-lines of a shock-aligned grid: wall to shock point (j = j_s) to outer point.
 
     Args:
         config: Validated configuration with a [shock] table.
@@ -309,14 +309,18 @@ def _shock_line_grid(
     # it stops short of it
     shock = config.shock
     shock_x, shock_y = read_shock_curve(shock.curve)
-    shock_x, shock_y = start_on_axis(shock_x, shock_y, config.geometry.nose_radius)
+
+    # its name in messages names the file, so they say which curve the grid read
+    curve_name = f"shock curve ({shock.curve})"
+
+    shock_x, shock_y = start_on_axis(shock_x, shock_y, config.geometry.nose_radius, curve_name)
     shock_x, shock_y = extend_shock(
-        shock_x, shock_y, x_wall, y_wall, shock.margin_factor, shock.min_offset
+        shock_x, shock_y, x_wall, y_wall, shock.margin_factor, shock.min_offset, curve_name
     )
 
     # shock line: where each wall normal crosses the shock, evenly spaced along it
     shock_point_x, shock_point_y = points_on_curve(
-        x_wall, y_wall, nx, ny, shock_x, shock_y, "shock curve"
+        x_wall, y_wall, nx, ny, shock_x, shock_y, curve_name
     )
 
     # outer boundary: the shock pushed out by the margin, its points found the same way

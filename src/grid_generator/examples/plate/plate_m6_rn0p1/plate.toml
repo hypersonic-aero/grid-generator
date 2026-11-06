@@ -1,7 +1,7 @@
-# flat plate, 0.1 mm leading-edge radius, Mach 6, shock-line grid
+# flat plate, 0.1 mm leading-edge radius, Mach 6, shock-aligned grid
 #
 # body: flat plate with a circular leading edge of 0.1 mm radius, ending at x = 50 mm
-# shock.csv: flow-theory shock-shape run, method billig, for Mach 6 (gamma = 1.4)
+# shock_shape.csv: flow-theory shock-shape run, method billig, for Mach 6 (gamma = 1.4)
 #   on the same body
 # the shock is the grid line j = 160 on every line (shock layer: 161 points); near
 #   the leading edge the lines are too short for both the 1 um wall spacing and 1 %
@@ -25,7 +25,7 @@ x_end = 0.05
 # margin_factor x (the wall-to-shock distance) + min_offset from the wall.
 [shock]
 # shock curve: x, y columns (flow-theory shock-shape run with a .csv output)
-curve = "shock.csv"
+curve = "shock_shape.csv"
 # factor on the wall-to-shock distance
 margin_factor = 1.5
 # distance added beyond the scaled shock distance [m]

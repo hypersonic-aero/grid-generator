@@ -50,7 +50,7 @@ class GridQuality:
 
 @dataclass(frozen=True, slots=True)
 class ShockLineQuality:
-    """Summary of the shock line (j = j_s) of a shock-line grid.
+    """Summary of the shock line (j = j_s) of a shock-aligned grid.
 
     Attributes:
         shock_line_j: Index j_s of the grid line on the shock.
@@ -239,7 +239,7 @@ def grid_quality(grid: StructuredGrid) -> GridQuality:
 def shock_line_quality(
     grid: StructuredGrid, shock_line_j: int, first_spacing: float, end_spacing_fraction: float
 ) -> ShockLineQuality:
-    """Measure the shock line of a 2D shock-line grid: distances, spacings, lowered lines.
+    """Measure the shock line of a 2D shock-aligned grid: distances, spacings, lowered lines.
 
     The spacing at the shock is measured along the wall normal (the direction of the
     first cell), as [points.shock_layer] sets it: a line bends toward its shock point
@@ -253,7 +253,7 @@ def shock_line_quality(
             wall-to-shock distance ([points.shock_layer] end_spacing_fraction).
 
     Returns:
-        Shock-line report.
+        Report on the shock line.
 
     Raises:
         ValueError: If the grid is not 2D, or j_s isn't an inner grid line.

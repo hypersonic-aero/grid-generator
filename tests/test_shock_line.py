@@ -1,4 +1,4 @@
-"""Tests for shock-line grids ([shock]): the shock is the grid line j = j_s on every line."""
+"""Tests for shock-aligned grids ([shock]): the shock is the grid line j = j_s on every line."""
 
 # --------------------------------------------------
 # load necessary modules
@@ -35,7 +35,7 @@ N_FREESTREAM = 11
 FIRST_SPACING = 1.0e-6
 END_SPACING_FRACTION = 0.02
 
-# a shock-line grid config; the tables in braces are filled per test
+# a shock-aligned grid config; the tables in braces are filled per test
 CONFIG_TEMPLATE = """
 [geometry]
 type = "cone"
@@ -475,15 +475,20 @@ def test_a_shock_curve_with_missing_values_is_rejected(tmp_path: Path) -> None:
 
 
 def test_a_shock_that_ends_too_early_is_reported(tmp_path: Path) -> None:
-    """A shock curve that stops before the outflow fails with a clear message."""
+    """A shock curve that stops before the outflow fails with a clear message.
+
+    The message names the curve's file, so it says which curve the grid read (e.g. an
+    example's curve left in the folder instead of a new one).
+    """
 
     # a shock that ends halfway along the body
     write_shock(tmp_path / "shock.csv", 0.5 * X_END)
     config = load_body_fitted_config(write_config(tmp_path))
 
     # check
-    with pytest.raises(ValueError, match="too far before the outflow"):
+    with pytest.raises(ValueError, match="too far before the outflow") as raised:
         generate_body_fitted(config)
+    assert "shock.csv" in str(raised.value)
 
 
 @pytest.mark.parametrize("shock_end", [X_END, X_END - 2.0e-3])
@@ -542,14 +547,14 @@ def test_the_shock_path_is_relative_to_the_config_file(
             SHOCK_LINE_POINTS.split("[points.freestream]")[0],
             r"needs \[points.freestream\]",
         ),
-        (False, 0.05, SHOCK_LINE_POINTS, r"are for shock-line grids"),
+        (False, 0.05, SHOCK_LINE_POINTS, r"are for shock-aligned grids"),
         (False, 0.05, "", r"needs \[points.normal\]"),
     ],
 )
 def test_each_layout_takes_its_own_tables(
     tmp_path: Path, shock: bool, height: float | None, normal_points: str, message: str
 ) -> None:
-    """Constant height takes [points.normal]; a shock line takes the two shock-line tables."""
+    """Constant height takes [points.normal]; a shock line takes the two shock-aligned tables."""
 
     # write
     write_shock(tmp_path / "shock.csv", 2.0 * X_END)
@@ -572,7 +577,7 @@ def test_each_layout_takes_its_own_tables(
     ],
 )
 def test_load_rejects_bad_shock_tables(tmp_path: Path, old: str, new: str, message: str) -> None:
-    """Out-of-range or misspelled [shock] and shock-line [points] keys are rejected."""
+    """Out-of-range or misspelled [shock] and shock-aligned [points] keys are rejected."""
 
     # write, then break one key
     write_shock(tmp_path / "shock.csv", 2.0 * X_END)
@@ -602,7 +607,7 @@ def test_too_many_freestream_points_are_reported(tmp_path: Path) -> None:
 
 
 def test_order_2_needs_odd_shock_line_counts(tmp_path: Path) -> None:
-    """Second-order elements need odd counts in both shock-line tables."""
+    """Second-order elements need odd counts in both shock-aligned tables."""
 
     # write, then ask for 9-node quads with an even shock-layer count
     write_shock(tmp_path / "shock.csv", 2.0 * X_END)
@@ -647,11 +652,11 @@ def test_cli_run_reports_the_shock_line(tmp_path: Path, monkeypatch: pytest.Monk
 def test_cli_init_shock_writes_a_runnable_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, geometry_type: str
 ) -> None:
-    """init --shock writes a shock-line config; with a shock curve next to it, it runs."""
+    """init --shock-aligned writes a shock-aligned config; with a shock curve next to it, it runs."""
 
     # init
     monkeypatch.chdir(tmp_path)
-    init_result = runner.invoke(app, [geometry_type, "init", "--shock"])
+    init_result = runner.invoke(app, [geometry_type, "init", "--shock-aligned"])
     assert init_result.exit_code == 0, init_result.output
     config_text = Path(f"{geometry_type}.toml").read_text(encoding="utf-8")
     assert "[shock]" in config_text
@@ -663,7 +668,7 @@ def test_cli_init_shock_writes_a_runnable_config(
     x = -delta + radius / math.tan(beta) ** 2 * (
         np.sqrt(1.0 + (y * math.tan(beta) / radius) ** 2) - 1.0
     )
-    np.savetxt("shock.csv", np.column_stack([x, y]), delimiter=",", header="x,y", comments="")
+    np.savetxt("shock_shape.csv", np.column_stack([x, y]), delimiter=",", header="x,y", comments="")
 
     # run
     run_result = runner.invoke(app, [geometry_type, "run"])
@@ -672,11 +677,11 @@ def test_cli_init_shock_writes_a_runnable_config(
 
 
 def test_cli_init_rejects_shock_with_a_normal_choice(tmp_path: Path) -> None:
-    """--normal picks [points.normal], which a shock-line grid doesn't have."""
+    """--normal picks [points.normal], which a shock-aligned grid doesn't have."""
 
     # check
     result = runner.invoke(
-        app, ["cone", "init", "--shock", "--normal", "tanh", "-o", str(tmp_path / "c.toml")]
+        app, ["cone", "init", "--shock-aligned", "--normal", "tanh", "-o", str(tmp_path / "c.toml")]
     )
     assert result.exit_code == 1
     assert "--normal" in result.output
@@ -707,7 +712,7 @@ def test_start_on_axis_continues_a_curve_that_starts_off_the_axis(
     x = -4.0e-4 + 120.0 * y**2
 
     with caplog.at_level(logging.WARNING, logger="grid_generator"):
-        axis_x, axis_y = start_on_axis(x, y, NOSE_RADIUS)
+        axis_x, axis_y = start_on_axis(x, y, NOSE_RADIUS, "shock curve")
 
     assert axis_y[0] == 0.0
     assert axis_x[0] == pytest.approx(-4.0e-4, abs=1.0e-15)
@@ -721,7 +726,7 @@ def test_start_on_axis_leaves_a_curve_on_the_axis_alone() -> None:
     y = np.linspace(0.0, 1.0e-3, 50)
     x = -4.0e-4 + 120.0 * y**2
 
-    axis_x, axis_y = start_on_axis(x, y, NOSE_RADIUS)
+    axis_x, axis_y = start_on_axis(x, y, NOSE_RADIUS, "shock curve")
 
     assert axis_x is x
     assert axis_y is y
@@ -733,7 +738,7 @@ def test_start_on_axis_refuses_a_curve_that_misses_the_axis() -> None:
     x = -4.0e-4 + 0.2 * y
 
     with pytest.raises(ValueError, match="must start on the axis"):
-        start_on_axis(x, y, NOSE_RADIUS)
+        start_on_axis(x, y, NOSE_RADIUS, "shock curve")
 
 
 def test_start_on_axis_refuses_a_curve_with_points_missing_near_the_axis() -> None:
@@ -748,7 +753,7 @@ def test_start_on_axis_refuses_a_curve_with_points_missing_near_the_axis() -> No
     x = -4.0e-4 + 120.0 * y**2
 
     with pytest.raises(ValueError, match="points are missing near the axis"):
-        start_on_axis(x, y, NOSE_RADIUS)
+        start_on_axis(x, y, NOSE_RADIUS, "shock curve")
 
 
 def test_a_shock_curve_off_the_axis_keeps_the_symmetry_line_on_it(
@@ -798,7 +803,7 @@ def test_a_symmetry_line_off_the_axis_is_refused(
     # the old behaviour: the curve used as it is
     monkeypatch.setattr(
         "grid_generator.body_fitted.start_on_axis",
-        lambda shock_x, shock_y, radius: (shock_x, shock_y),
+        lambda shock_x, shock_y, radius, curve_name: (shock_x, shock_y),
     )
     write_off_axis_shock(tmp_path / "shock.csv", 1.0e-5)
     config = load_body_fitted_config(write_config(tmp_path))

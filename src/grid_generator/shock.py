@@ -1,4 +1,4 @@
-"""Shock-line grids: the shock curve, the grid's points on it, and the outer boundary beyond it.
+"""Shock-aligned grids: the shock curve, the grid's points on it, and the outer boundary beyond it.
 
 The [shock] table names a shock curve (x, y columns in a CSV file, e.g. written by
 `flow-theory shock-shape run` with a .csv output, or a shock taken from a CFD
@@ -117,6 +117,7 @@ def start_on_axis(
     shock_x: NDArray[np.float64],
     shock_y: NDArray[np.float64],
     nose_radius: float,
+    curve_name: str,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Make the shock curve start on the axis y = 0, where the symmetry line i = 0 meets it.
 
@@ -129,6 +130,7 @@ def start_on_axis(
         shock_x: Shock x [m], from its smallest y outward.
         shock_y: Shock y [m].
         nose_radius: Nose radius of the body [m], the scale of "close to the axis".
+        curve_name: Name of the curve for messages, e.g. "shock curve (shock.csv)".
 
     Returns:
         Shock x and y [m], starting on the axis (unchanged if it already did).
@@ -147,7 +149,7 @@ def start_on_axis(
     # check: a small gap above the axis, not a curve that misses the nose
     if first_y < 0.0 or first_y > _AXIS_GAP_LIMIT * nose_radius:
         raise ValueError(
-            f"the shock curve starts at y = {first_y:.4g} m; it must start on the axis "
+            f"the {curve_name} starts at y = {first_y:.4g} m; it must start on the axis "
             f"y = 0, or within {_AXIS_GAP_LIMIT:g} nose radii above it (e.g. half a cell "
             "off, from cell-centre data), to be continued there"
         )
@@ -159,7 +161,7 @@ def start_on_axis(
     point_spacing = float(fit_arc) / (n_fit - 1)
     if first_y > _AXIS_GAP_SPACINGS * point_spacing:
         raise ValueError(
-            f"the shock curve starts at y = {first_y:.4g} m, {first_y / point_spacing:.3g} of "
+            f"the {curve_name} starts at y = {first_y:.4g} m, {first_y / point_spacing:.3g} of "
             f"its point spacings ({point_spacing:.4g} m) above the axis; a curve from "
             "cell-centre data starts half a spacing away, so points are missing near the "
             f"axis: give the curve from y = 0, or within {_AXIS_GAP_SPACINGS:g} spacings of it"
@@ -178,8 +180,9 @@ def start_on_axis(
 
     # tell the user: the grid differs from the curve's points there
     logger.warning(
-        "the shock curve starts at y = %.4g m, off the axis (a curve from cell-centre "
+        "the %s starts at y = %.4g m, off the axis (a curve from cell-centre "
         "data starts half a cell away); continued it to the axis at x = %.6g m",
+        curve_name,
         first_y,
         axis_x,
     )
@@ -249,6 +252,7 @@ def extend_shock(
     y_wall: NDArray[np.float64],
     margin_factor: float,
     min_offset: float,
+    curve_name: str,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Continue a shock curve straight past the outflow when it stops short of it.
 
@@ -264,6 +268,7 @@ def extend_shock(
         y_wall: Wall points y [m].
         margin_factor: Factor on the shock's distance from the wall (>= 1).
         min_offset: Distance added beyond the scaled shock distance [m].
+        curve_name: Name of the curve for messages, e.g. "shock curve (shock.csv)".
 
     Returns:
         Shock x and y [m], continued past the outflow where needed.
@@ -287,7 +292,7 @@ def extend_shock(
     # check: a straight continuation is only trusted over about one shock-layer height
     if shock_x[-1] < x_outflow - end_distance:
         raise ValueError(
-            f"the shock curve ends at x = {shock_x[-1]:.4g} m, too far before the outflow "
+            f"the {curve_name} ends at x = {shock_x[-1]:.4g} m, too far before the outflow "
             f"at x = {x_outflow:.4g} m to continue it straight (more than its distance from "
             f"the wall, {end_distance:.3g} m); give a longer curve (flow-theory: raise x_e)"
         )
@@ -305,8 +310,8 @@ def extend_shock(
     # check: the end must run downstream to ever reach the outflow
     if direction_x <= 0.0:
         raise ValueError(
-            f"the shock curve's end (x = {shock_x[-1]:.4g} m) doesn't run downstream, "
-            "so it can't be continued past the outflow"
+            f"the end of the {curve_name}, at x = {shock_x[-1]:.4g} m, doesn't run "
+            "downstream, so it can't be continued past the outflow"
         )
 
     # straight continuation in ten segments, until x passes the reach
@@ -317,7 +322,8 @@ def extend_shock(
 
     # report the continuation (visible with --verbose)
     logger.info(
-        "shock curve continued straight by %.3g m, from x = %.4g m to x = %.4g m",
+        "%s continued straight by %.3g m, from x = %.4g m to x = %.4g m",
+        curve_name,
         length,
         shock_x[-1],
         extended_x[-1],

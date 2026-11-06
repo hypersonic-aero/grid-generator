@@ -48,16 +48,17 @@ grid-generator plate run
 
 `run` reads the file `init` writes (`plate.toml`); pass another one with `-c`.
 
-For a shock-line grid the bow shock is a grid line: the same index `j` on every
+For a shock-aligned grid the bow shock is a grid line: the same index `j` on every
 wall-normal line, so a solution's captured shock stays in one row of cells.
-`init --shock` writes that layout; it reads the shock curve from a CSV file
-(e.g. `flow-theory shock-shape run` with a `.csv` output, or a shock taken from a
-CFD solution). Grid line `i = 0` is the symmetry line on the axis `y = 0`, so the
+`init --shock-aligned` writes that layout; it reads the shock curve from a CSV file,
+by default `shock_shape.csv`: what `flow-theory shock-shape run` writes with
+`output = "shock_shape.csv"`. A shock taken from a CFD solution (`flow-props shock`)
+works the same way. Grid line `i = 0` is the symmetry line on the axis `y = 0`, so the
 curve starts there; a curve that starts a little above it (a shock from cell-centre
 data starts half a cell away) is continued to the axis, with a warning:
 
 ```bash
-grid-generator cone init --shock
+grid-generator cone init --shock-aligned
 grid-generator cone run
 ```
 
@@ -79,14 +80,14 @@ grid-generator cone run
 
 Next to every body-fitted grid, `run` writes `<grid>.grid.json`: what not every grid
 format can carry, as plain JSON for scripts and post-processing. It holds the boundary
-names per side, the coordinate scale, the shock line `shock_line_j` of a shock-line
+names per side, the coordinate scale, the shock line `shock_line_j` of a shock-aligned
 grid, and the side-face transform and solver lines of a swept grid.
 
 ## Features
 
 - One-, two-, and three-dimensional Cartesian tensor-product grids
 - Body-fitted 2D grids with a polar nose block, SU2 boundary markers, and a grid
-  quality report: constant height, or shock-line grids whose bow shock is a grid line
+  quality report: constant height, or shock-aligned grids whose bow shock is a grid line
 - 3D grids from the 2D ones: cone and ogive sectors revolved about the axis (prisms on
   the axis), plate and wedge slabs extruded in z, with matched side faces
 - Equidistant, geometric, tanh, two-sided (Vinokur), and segmented point distributions

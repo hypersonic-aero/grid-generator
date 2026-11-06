@@ -1,7 +1,7 @@
-# 7 deg cone, 2.5 mm nose radius, Mach 6, shock-line grid
+# 7 deg cone, 2.5 mm nose radius, Mach 6, shock-aligned grid
 #
 # body: 7 deg half-angle sphere-cone, 2.5 mm nose, ending at x = 0.5 m
-# shock.csv: flow-theory shock-shape run, method billig_blended, for Mach 6
+# shock_shape.csv: flow-theory shock-shape run, method billig_blended, for Mach 6
 #   (gamma = 1.4) on the same body
 # the shock is the grid line j = 160 on every line (shock layer: 161 points)
 # run: grid-generator cone run
@@ -24,7 +24,7 @@ x_end = 0.5
 # margin_factor x (the wall-to-shock distance) + min_offset from the wall.
 [shock]
 # shock curve: x, y columns (flow-theory shock-shape run with a .csv output)
-curve = "shock.csv"
+curve = "shock_shape.csv"
 # factor on the wall-to-shock distance
 margin_factor = 1.5
 # distance added beyond the scaled shock distance [m]

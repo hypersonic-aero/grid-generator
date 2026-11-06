@@ -63,22 +63,31 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
         (f"{command} init", "defaults"),
         (f"{command} init --body segmented", "segmented body"),
         (f"{command} init --normal tanh", "tanh wall-normal"),
-        (f"{command} init --shock", "shock-line grid (needs a shock curve)"),
+        (f"{command} init --shock-aligned", "shock-aligned grid (needs a shock curve)"),
         (f"{command} init --sweep", sweep_text),
         (f"{command} run -c {geometry_type}.toml", "generate the grid"),
     ]
 
+    # group help: what the body is, then the kinds of grid init can start
+    kinds_text = (
+        "Two kinds of grid: constant height (the default: the outer boundary a fixed "
+        "distance off the wall) or shock-aligned (init --shock-aligned: a shock curve "
+        "becomes the grid line j_s on every wall-normal line). init --sweep makes either "
+        "one 3D."
+    )
+    group_help = f"{GEOMETRY_HELP[geometry_type]}\n\n{kinds_text}"
+
     # command group
     geometry_app = typer.Typer(
         name=geometry_type,
-        help=GEOMETRY_HELP[geometry_type],
+        help=group_help,
         epilog=format_examples(examples),
         no_args_is_help=True,
     )
     default_config = Path(f"{geometry_type}.toml")
 
-    # init summary names its options, so they show in the command list
-    init_help = "Create a starter configuration (--body, --normal, --shock, --sweep)."
+    # init summary: what it writes (the options are explained under init --help)
+    init_help = "Write a starter configuration; the options pick the kind of grid and its spacing."
 
     # init: write the starter configuration for this geometry
     @geometry_app.command("init", help=init_help)
@@ -93,14 +102,22 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
         ] = False,
         body: Annotated[
             str,
-            typer.Option(help=f"Body distribution along the wall: {', '.join(BODY_BLOCKS)}."),
+            typer.Option(
+                help=(
+                    "How the points are spread along the body: geometric (the spacing "
+                    "grows from the nose spacing) or segmented (regions in x, each with "
+                    "its own spacing)."
+                )
+            ),
         ] = DEFAULT_BODY,
         normal: Annotated[
             str | None,
             typer.Option(
                 help=(
-                    f"Wall-normal distribution: {', '.join(NORMAL_BLOCKS)} "
-                    f"(default {DEFAULT_NORMAL}; constant-height grids)."
+                    "How the points are spread away from the wall on a constant-height "
+                    "grid: geometric (the spacing grows from the first spacing) or tanh "
+                    f"(tanh stretching to the height). Default {DEFAULT_NORMAL}; not with "
+                    "--shock-aligned."
                 )
             ),
         ] = None,
@@ -115,11 +132,14 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
                 ),
             ),
         ] = False,
-        shock: Annotated[
+        shock_aligned: Annotated[
             bool,
             typer.Option(
-                "--shock",
-                help="Shock-line grid: the shock (a curve file) is a grid line.",
+                "--shock-aligned",
+                help=(
+                    "Shock-aligned grid instead of a constant height: a shock curve (CSV, "
+                    "by default shock_shape.csv from flow-theory) becomes the grid line j_s."
+                ),
             ),
         ] = False,
     ) -> None:
@@ -132,10 +152,10 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
         if normal is not None and normal not in NORMAL_BLOCKS:
             typer.echo(f"error: --normal must be one of: {', '.join(NORMAL_BLOCKS)}", err=True)
             raise typer.Exit(code=1)
-        if shock and normal is not None:
+        if shock_aligned and normal is not None:
             typer.echo(
-                "error: --normal picks [points.normal], which a shock-line grid (--shock) "
-                "doesn't have",
+                "error: --normal picks [points.normal], which a shock-aligned grid "
+                "(--shock-aligned) doesn't have",
                 err=True,
             )
             raise typer.Exit(code=1)
@@ -147,16 +167,18 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
 
         # write and validate the starter configuration
         template = body_fitted_template(
-            geometry_type, body=body, normal=normal, sweep=sweep, shock=shock
+            geometry_type, body=body, normal=normal, sweep=sweep, shock_aligned=shock_aligned
         )
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(template, encoding="utf-8")
         load_body_fitted_config(output, expected_type=geometry_type)
 
         typer.echo(f"Created: {output}")
-        if shock:
-            typer.echo("Put the shock curve next to it (see [shock] curve).")
+        if shock_aligned:
+            typer.echo("Put the shock curve next to it as shock_shape.csv (see [shock] curve).")
         typer.echo(f"Edit the file, then run: grid-generator {geometry_type} run -c {output}")
+        if list_examples(geometry_type):
+            typer.echo(f"Ready-to-run cases: grid-generator {geometry_type} examples")
 
     # run: generate the grid from a configuration, report its quality and write it
     @geometry_app.command("run")
@@ -183,7 +205,7 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
             plane = StructuredGrid(x=grid.x[:, :, :1], y=grid.y[:, :, :1], z=grid.z[:, :, :1])
             quality = grid_quality(plane)
 
-            # shock-line grids: where the shock line sits, and the spacing around it
+            # shock-aligned grids: where the shock line sits, and the spacing around it
             shock_line_j = dataset.attrs.get("shock_line_j")
             shock_quality = None
             if shock_line_j is not None:

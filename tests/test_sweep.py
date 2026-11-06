@@ -157,11 +157,11 @@ def test_side_faces_match_and_cells_have_volume(tmp_path: Path, geometry_type: s
         assert report.axis_cells == 0
 
 
-def test_shock_line_grid_revolves(tmp_path: Path) -> None:
-    """A shock-line cone grid revolves like any other: same plane, the shock line kept."""
+def test_shock_aligned_grid_revolves(tmp_path: Path) -> None:
+    """A shock-aligned cone grid revolves like any other: same plane, the shock line kept."""
 
     # template with the shock line and the sweep; a straight shock curve next to it
-    config_text = body_fitted_template("cone", sweep=True, shock=True)
+    config_text = body_fitted_template("cone", sweep=True, shock_aligned=True)
     config_text = config_text.replace(f"n_points = {N_SWEEP_TEMPLATE}\n", f"n_points = {N_SWEEP}\n")
     config_path = tmp_path / "cone.toml"
     config_path.write_text(config_text)

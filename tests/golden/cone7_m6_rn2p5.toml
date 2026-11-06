@@ -1,8 +1,8 @@
 # Golden grid: a frozen config whose grid must not change (tests/test_golden.py).
 # A deliberate change: rerun tests/golden/make_golden.py, and say why in the commit.
-# The shock-line path: no line here is too short for its end spacings, so a change
+# The shock-aligned path: no line here is too short for its end spacings, so a change
 # to the short-line rule must leave this grid alone.
-# 7 deg cone, 2.5 mm nose radius, Mach 6, shock-line grid
+# 7 deg cone, 2.5 mm nose radius, Mach 6, shock-aligned grid
 #
 # body: 7 deg half-angle sphere-cone, 2.5 mm nose, ending at x = 0.5 m
 # cone7_m6_rn2p5_shock.csv: flow-theory shock-shape run, method billig_blended, for Mach 6

@@ -291,9 +291,9 @@ BODY_FITTED_RULES: tuple[str, ...] = (
     "[points.body] geometric: no first_spacing or ratio (the nose spacing is the first)",
     "[points.body] segmented: the first segment gives only its end (at the nose spacing)",
     "[points.body] segments: ends in x, spacings along the wall (rounded to whole cells)",
-    "[points.shock_layer] (shock-line grids, instead of [points.normal]): vinokur from "
+    "[points.shock_layer] (shock-aligned grids, instead of [points.normal]): vinokur from "
     "the wall to the shock, with end_spacing_fraction (of each line's wall-to-shock "
     "distance) instead of end_spacing",
-    "[points.freestream] (shock-line grids): geometric from the shock to the outer "
+    "[points.freestream] (shock-aligned grids): geometric from the shock to the outer "
     "boundary, n_points only (it starts at the spacing at the shock)",
 )

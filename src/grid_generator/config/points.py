@@ -4,7 +4,7 @@ The tables use the same distribution types and keys as the Cartesian axes, witho
 start and end: those come from the geometry and [domain]. The body starts at the
 nose spacing, so the wall spacing is continuous across the nose/body junction.
 
-A shock-line grid builds its wall-normal points per line, from the line's own
+A shock-aligned grid builds its wall-normal points per line, from the line's own
 lengths: [points.shock_layer] from the wall to the shock, [points.freestream] from
 the shock to the outer boundary.
 """

@@ -1,4 +1,4 @@
-"""Golden grids: the grids of frozen configs (constant-height, and one shock-line) must not change.
+"""Golden grids: the grids of frozen configs (constant-height, and one shock-aligned) must not change.
 
 tests/golden holds the configs and their reference coordinates (written by
 tests/golden/make_golden.py). A deliberate change to these grids reruns that script
