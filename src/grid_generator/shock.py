@@ -66,6 +66,13 @@ _AXIS_FIT_POINTS = 5
 # lost points there (cell-centre data starts half a spacing away; one missed line, 1.5)
 _AXIS_GAP_SPACINGS = 2.0
 
+# where a bow shock crosses the axis ahead of a blunt nose, in nose radii: Billig's
+# correlations give about 0.14 for a sphere at high Mach, rising to about 1.4 near Mach
+# 1.2, and about 0.39 for a cylinder (the plate's and wedge's leading edge) at high
+# Mach, a few radii at low supersonic Mach. A curve outside this range was made for
+# another body (e.g. a nose radius left at a template value).
+_STANDOFF_RANGE_RADII = (0.03, 5.0)
+
 
 # --------------------------------------------------
 # public API
@@ -188,6 +195,41 @@ def start_on_axis(
     )
 
     return axis_shock_x, axis_shock_y
+
+
+def check_standoff(
+    shock_x: NDArray[np.float64],
+    nose_radius: float,
+    curve_name: str,
+) -> None:
+    """Refuse a shock curve that stands implausibly far from (or close to) this body's nose.
+
+    The stagnation point is the origin and the curve starts on the axis (start_on_axis),
+    so the shock stands -shock_x[0] ahead of the nose. A shock curve made for another
+    body (another nose radius) stands at a distance that doesn't fit this one; building
+    the grid on it would give a distorted grid, not an error.
+
+    Args:
+        shock_x: Shock x [m], starting on the axis.
+        nose_radius: Nose radius of the body [m].
+        curve_name: Name of the curve for messages, e.g. "shock curve (shock.csv)".
+
+    Raises:
+        ValueError: If the distance ahead of the nose lies outside 0.03 to 5 nose radii.
+    """
+
+    # how far ahead of the nose the shock crosses the axis, in nose radii
+    axis_x = float(shock_x[0])
+    standoff_radii = -axis_x / nose_radius
+
+    # check: a bow shock of this body
+    low, high = _STANDOFF_RANGE_RADII
+    if not low <= standoff_radii <= high:
+        raise ValueError(
+            f"the {curve_name} crosses the axis at x = {axis_x:.4g} m, {standoff_radii:.3g} "
+            f"nose radii ahead of the nose (nose_radius = {nose_radius:.4g} m); a bow shock "
+            "stands about 0.1 to 1 nose radius off: is the curve for this body?"
+        )
 
 
 def points_on_curve(

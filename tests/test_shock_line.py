@@ -12,6 +12,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from bodies import write_geometry
 from cfd_io import StructuredGrid
 from typer.testing import CliRunner
 
@@ -35,12 +36,17 @@ N_FREESTREAM = 11
 FIRST_SPACING = 1.0e-6
 END_SPACING_FRACTION = 0.02
 
+# the cone's geometry file: `geometry cone init`'s file, with this cone
+CONE_GEOMETRY = (
+    ("nose_radius = 100.0e-6", f"nose_radius = {NOSE_RADIUS}"),
+    ("length = 0.5", f"length = {X_END}"),
+    ("half_angle = 7.0", f"half_angle = {HALF_ANGLE}"),
+)
+
 # a shock-aligned grid config; the tables in braces are filled per test
 CONFIG_TEMPLATE = """
 [geometry]
-type = "cone"
-nose_radius = {nose_radius}
-half_angle = {half_angle}
+file = "geometry.toml"
 
 [domain]
 x_end = {x_end}
@@ -122,12 +128,11 @@ def write_config(
         shock_text = SHOCK_TABLE.format(margin_factor=margin_factor, min_offset=min_offset)
     domain_extra = f"height = {height}" if height is not None else ""
 
-    # write
-    path = folder / "cone.toml"
+    # write the grid config, and the cone it points at
+    write_geometry(folder, "cone", CONE_GEOMETRY)
+    path = folder / "grid.toml"
     path.write_text(
         CONFIG_TEMPLATE.format(
-            nose_radius=NOSE_RADIUS,
-            half_angle=HALF_ANGLE,
             x_end=X_END,
             domain_extra=domain_extra,
             shock=shock_text,
@@ -474,6 +479,28 @@ def test_a_shock_curve_with_missing_values_is_rejected(tmp_path: Path) -> None:
         generate_body_fitted(config)
 
 
+def test_a_shock_curve_for_another_body_is_refused(tmp_path: Path) -> None:
+    """A curve made for another nose radius stands too far off this nose: refused, not built.
+
+    The test shock stands 0.4 mm ahead of the nose, right for the 2.5 mm nose; on a
+    25 um nose that is 16 nose radii, where no bow shock stands.
+    """
+
+    # the shock and config, then a body with a 100 times smaller nose
+    write_shock(tmp_path / "shock.csv", 2.0 * X_END)
+    config_path = write_config(tmp_path)
+    small_nose = (
+        ("nose_radius = 100.0e-6", "nose_radius = 25.0e-6"),
+        ("length = 0.5", f"length = {X_END}"),
+    )
+    write_geometry(tmp_path, "cone", small_nose)
+    config = load_body_fitted_config(config_path)
+
+    # check: the message names the curve's file and the distance in nose radii
+    with pytest.raises(ValueError, match=r"shock\.csv\) crosses the axis .* 16 nose radii"):
+        generate_body_fitted(config)
+
+
 def test_a_shock_that_ends_too_early_is_reported(tmp_path: Path) -> None:
     """A shock curve that stops before the outflow fails with a clear message.
 
@@ -642,10 +669,52 @@ def test_cli_run_reports_the_shock_line(tmp_path: Path, monkeypatch: pytest.Monk
     assert (tmp_path / "grid.h5").exists()
 
     # check: the JSON next to the grid names the shock line, for formats without attributes
-    metadata = json.loads((tmp_path / "grid.grid.json").read_text(encoding="utf-8"))
+    metadata = json.loads((tmp_path / "grid.json").read_text(encoding="utf-8"))
     assert metadata["shock_line_j"] == N_SHOCK_LAYER - 1
     assert metadata["grid_file"] == "grid.h5"
     assert metadata["markers"]["structured"]["jmin"] == "wall"
+
+
+def test_the_grid_record_holds_what_made_the_grid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """grid.json records versions, settings as applied, the body and the shock curve itself.
+
+    The same inputs give the same record, byte for byte (no timestamp), so a diff of two
+    records shows whether anything that made the grid changed.
+    """
+
+    # write and run twice
+    monkeypatch.chdir(tmp_path)
+    shock_x, shock_y = write_shock(tmp_path / "shock.csv", 2.0 * X_END)
+    write_config(tmp_path)
+    first_run = runner.invoke(app, ["cone", "run"])
+    first_record = (tmp_path / "grid.json").read_text(encoding="utf-8")
+    second_run = runner.invoke(app, ["cone", "run"])
+    second_record = (tmp_path / "grid.json").read_text(encoding="utf-8")
+    record = json.loads(first_record)
+
+    # check: the runs, and the same record twice
+    assert first_run.exit_code == 0, first_run.output
+    assert second_run.exit_code == 0, second_run.output
+    assert first_record == second_record
+
+    # check: versions, the config, and the body with its source
+    assert set(record["versions"]) == {"grid-generator", "canonical-geometries", "cfd-io"}
+    assert record["config_file"] == "grid.toml"
+    assert record["body"]["source"] == "geometry.toml"
+    assert record["body"]["nose_radius"] == NOSE_RADIUS
+
+    # check: settings as applied, paths as the config gives them
+    assert record["settings"]["domain"]["x_end"] == X_END
+    assert record["settings"]["points"]["shock_layer"]["n_points"] == N_SHOCK_LAYER
+    assert record["settings"]["shock"]["curve"] == "shock.csv"
+    assert record["settings"]["output"]["filename"] == "grid.h5"
+
+    # check: the curve itself, exactly as written
+    assert record["shock_curve"]["file"] == "shock.csv"
+    np.testing.assert_array_equal(record["shock_curve"]["x"], shock_x)
+    np.testing.assert_array_equal(record["shock_curve"]["y"], shock_y)
 
 
 @pytest.mark.parametrize("geometry_type", ["plate", "wedge", "cone", "tangent-ogive"])
@@ -654,11 +723,12 @@ def test_cli_init_shock_writes_a_runnable_config(
 ) -> None:
     """init --shock-aligned writes a shock-aligned config; with a shock curve next to it, it runs."""
 
-    # init
+    # the starter body, then init
     monkeypatch.chdir(tmp_path)
+    write_geometry(tmp_path, geometry_type)
     init_result = runner.invoke(app, [geometry_type, "init", "--shock-aligned"])
     assert init_result.exit_code == 0, init_result.output
-    config_text = Path(f"{geometry_type}.toml").read_text(encoding="utf-8")
+    config_text = Path("grid.toml").read_text(encoding="utf-8")
     assert "[shock]" in config_text
     assert "[points.normal]" not in config_text
 

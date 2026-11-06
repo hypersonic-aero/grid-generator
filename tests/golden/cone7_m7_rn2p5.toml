@@ -7,13 +7,10 @@
 #   100 points on the nose, 1001 on the cone, 1000 wall-normal from 1e-6 m to 0.25 m
 # run: grid-generator cone run
 
-# Sphere-cone, axisymmetric about the x axis; the grid is the meridian plane.
+# Sphere-cone, axisymmetric about the x axis; the body is read from cone7_m7_rn2p5_geometry.toml
 [geometry]
-type = "cone"
-# nose radius in [m]
-nose_radius = 2.5e-3
-# cone half-angle in [deg]
-half_angle = 7.0
+# geometry file, relative to this file
+file = "cone7_m7_rn2p5_geometry.toml"
 
 [domain]
 # end of the grid (and of the body) along x, measured from the nose tip in [m]

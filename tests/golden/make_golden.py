@@ -1,7 +1,8 @@
 """Write the reference coordinates of the golden grids (tests/test_golden.py checks them).
 
 The golden grids are the constant-height grids of the frozen configs next to this
-script, and one shock-aligned grid (its shock curve next to it, as *_shock.csv). Their
+script, and one shock-aligned grid (its shock curve next to it, as *_shock.csv); each
+config's body is its *_geometry.toml. Their
 grids must not change by accident, so rerun this script only for a deliberate
 change, and say why in the commit:
 
@@ -96,8 +97,11 @@ def golden_record(config_path: Path) -> dict[str, NDArray]:
 def main() -> None:
     """Write one .npz per golden config."""
 
-    # one record per frozen config
-    for config_path in sorted(GOLDEN_DIR.glob("*.toml")):
+    # one record per frozen grid config (the *_geometry.toml files are their bodies)
+    config_paths = sorted(
+        path for path in GOLDEN_DIR.glob("*.toml") if not path.stem.endswith("_geometry")
+    )
+    for config_path in config_paths:
         record = golden_record(config_path)
         output_path = config_path.with_suffix(".npz")
         np.savez(output_path, **record)

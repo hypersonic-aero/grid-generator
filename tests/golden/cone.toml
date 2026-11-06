@@ -1,18 +1,10 @@
 # Golden grid: a frozen config whose grid must not change (tests/test_golden.py).
 # A deliberate change: rerun tests/golden/make_golden.py, and say why in the commit.
 
-# Sphere-cone, axisymmetric about the x axis, same contract as canonical-geometries
-# (geometry cone init) without length: the cone ends at [domain] x_end.
-# The grid is the meridian plane: run the solver axisymmetric.
-# The nose arc runs to 90 deg - half_angle, tangent to the cone.
-# Stagnation point at the origin, x along the axis, y radial.
+# Sphere-cone, axisymmetric about the x axis; the body is read from cone_geometry.toml
 [geometry]
-# type marker
-type = "cone"
-# nose radius in [m]
-nose_radius = 100.0e-6
-# cone half-angle in [deg]
-half_angle = 7.0
+# geometry file, relative to this file
+file = "cone_geometry.toml"
 
 # Extent of the grid.
 [domain]

@@ -1,24 +1,24 @@
-# 7 deg cone, 2.5 mm nose radius, Mach 6, shock-aligned grid
+# flat plate, 0.1 mm leading-edge radius, Mach 6, shock-aligned grid
 #
-# body: 7 deg half-angle sphere-cone, 2.5 mm nose, ending at x = 0.5 m
-# shock_shape.csv: flow-theory shock-shape run, method billig_blended, for Mach 6
-#   (gamma = 1.4) on the same body
-# the shock is the grid line j = 160 on every line (shock layer: 161 points)
-# run: grid-generator cone run
+# body: flat plate with a circular leading edge of 0.1 mm radius, ending at x = 50 mm
+# shock_shape.csv: flow-theory shock-shape run, method billig, for Mach 6 (gamma = 1.4)
+#   on the same body
+# the shock is the grid line j = 160 on every line (shock layer: 161 points); near
+#   the leading edge the lines are too short for both the 1 um wall spacing and 1 %
+#   at the shock, so the spacing at the shock is lowered there; lines under 160 um
+#   get uniform cells, below 1 um at the leading edge (see the run summary)
+# run: grid-generator plate run
 
-# Sphere-cone, axisymmetric about the x axis; the grid is the meridian plane.
+# Flat plate with a circular leading edge (upper half).
+# the body: geometry.toml next to this file (flow-theory reads the same file)
 [geometry]
-# geometry type
-type = "cone"
-# nose radius [m]
-nose_radius = 2.5e-3
-# cone half-angle [deg]
-half_angle = 7.0
+# geometry file, relative to this file
+file = "geometry.toml"
 
 # Extent of the grid along the body.
 [domain]
-# end of the grid (and of the body) along x, measured from the nose tip [m]
-x_end = 0.5
+# end of the grid along x, measured from the leading edge [m]: where the plate ends
+x_end = 0.05
 
 # Shock line: the shock curve is a grid line; the outer boundary lies
 # margin_factor x (the wall-to-shock distance) + min_offset from the wall.
@@ -33,14 +33,14 @@ min_offset = 0.0
 # along the wall, nose arc: equal angle steps
 [points.nose]
 # points on the nose arc
-n_points = 101
+n_points = 81
 
-# along the wall, cone: from the junction to x_end, starting at the nose spacing
+# along the wall, plate: from the junction to x_end, starting at the nose spacing
 [points.body]
 # distribution type
 type = "geometric"
-# points on the cone
-n_points = 401
+# points on the plate
+n_points = 201
 
 # from the wall to the shock: fine at the wall and again at the shock
 [points.shock_layer]
@@ -68,10 +68,10 @@ wall = "wall"
 outer = "farfield"
 # outflow plane at x_end
 outflow = "outflow"
-# stagnation line ahead of the nose
+# stagnation line ahead of the leading edge
 symmetry = "symmetry"
 
 # The path is relative to this file; the extension picks the format (.su2, .h5, .msh, ...)
 [output]
 # grid file
-filename = "cone7_m6_rn2p5.h5"
+filename = "plate_m6_rn0p1.h5"

@@ -10,6 +10,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from bodies import use_geometry_file, write_geometry
 from canonical_geometries import BluntedTangentOgive
 from cfd_io import read_file
 from typer.testing import CliRunner
@@ -49,17 +50,47 @@ BOUNDARY_MARKERS = {"imin": "symmetry", "imax": "outflow", "jmin": "wall", "jmax
 EXTRUDE_TABLE = '[sweep]\ntype = "extrude"\nwidth = 2.0e-3\nn_points = 5'
 
 
-def write_config(tmp_path: Path, old: str = "", new: str = "") -> Path:
-    """Write the starter template, optionally with one replacement, and return its path."""
+def write_config(
+    tmp_path: Path,
+    old: str = "",
+    new: str = "",
+    geometry_type: str = "plate",
+    geometry_replacements: tuple[tuple[str, str], ...] = (),
+    body_in_file: bool = False,
+) -> Path:
+    """Write the starter template, optionally edited, with its body in [geometry] or a file.
+
+    Args:
+        tmp_path: Folder for the config (and the geometry file).
+        old: Text to replace once in the grid config (nothing when empty).
+        new: Its replacement.
+        geometry_type: Geometry type of the template.
+        geometry_replacements: (old, new) replacements in the body's keys (the same
+            text in [geometry] and in geometry.toml).
+        body_in_file: Give the body as [geometry] file = "geometry.toml" (written next
+            to the config) instead of its keys, as init writes it.
+
+    Returns:
+        Path of the grid config.
+    """
 
     # build the config text
-    config_text = body_fitted_template("plate")
+    config_text = body_fitted_template(geometry_type)
     if old:
         assert old in config_text
         config_text = config_text.replace(old, new, 1)
 
+    # the body: in the geometry file, or its keys edited right here
+    if body_in_file:
+        config_text = use_geometry_file(config_text)
+        write_geometry(tmp_path, geometry_type, geometry_replacements)
+    else:
+        for body_old, body_new in geometry_replacements:
+            assert body_old in config_text, body_old
+            config_text = config_text.replace(body_old, body_new, 1)
+
     # write
-    config_path = tmp_path / "plate.toml"
+    config_path = tmp_path / "grid.toml"
     config_path.write_text(config_text)
 
     return config_path
@@ -74,7 +105,7 @@ def plate_config(tmp_path: Path) -> BodyFittedConfig:
 @pytest.fixture
 def cone_config(tmp_path: Path) -> BodyFittedConfig:
     """A 7 deg cone on the same grid settings."""
-    config_path = write_config(tmp_path, 'type = "plate"', 'type = "cone"\nhalf_angle = 7.0')
+    config_path = write_config(tmp_path, geometry_type="cone")
     return load_body_fitted_config(config_path)
 
 
@@ -257,8 +288,8 @@ def test_cli_run_refuses_a_folded_grid(tmp_path: Path, monkeypatch: pytest.Monke
 
     monkeypatch.setattr(body_fitted, "build_grid_lines", crossing_lines)
 
-    # init and run
-    config_path = tmp_path / "plate.toml"
+    # init and run, with the starter body next to the config
+    config_path = tmp_path / "grid.toml"
     runner.invoke(app, ["plate", "init", "--output", str(config_path)])
     result = runner.invoke(app, ["plate", "run", "-c", str(config_path)])
 
@@ -266,14 +297,14 @@ def test_cli_run_refuses_a_folded_grid(tmp_path: Path, monkeypatch: pytest.Monke
     assert result.exit_code == 1
     assert "error: " in result.output
     assert "folded or collapsed cells between i = 1 and 2" in result.output
-    assert not (tmp_path / "plate_local.su2").exists()
+    assert not (tmp_path / "plate_grid.dat").exists()
 
 
 def test_load_rejects_p3dfmt_without_sweep(tmp_path: Path) -> None:
     """A 2D grid can't go to a .p3dfmt file (the extension names the dimensionality)."""
 
     # write a 2D config with the 3D extension
-    config_path = write_config(tmp_path, "plate_local.su2", "plate_local.p3dfmt")
+    config_path = write_config(tmp_path, "plate_grid.dat", "plate_local.p3dfmt")
 
     with pytest.raises(ValueError, match="grid is 2D"):
         load_body_fitted_config(config_path)
@@ -311,17 +342,22 @@ def write_template(
     geometry_type: str = "plate",
     replacements: tuple[tuple[str, str], ...] = (),
     body: str = "geometric",
+    geometry_replacements: tuple[tuple[str, str], ...] = (),
 ) -> Path:
-    """Write a starter template with any number of text replacements, and return its path."""
+    """Write a starter template (its body in [geometry]) with any number of text replacements.
 
-    # build the config text
+    Returns:
+        Path of the grid config.
+    """
+
+    # build the config text, the body's keys included
     config_text = body_fitted_template(geometry_type, body=body)
-    for old, new in replacements:
-        assert old in config_text
+    for old, new in (*replacements, *geometry_replacements):
+        assert old in config_text, old
         config_text = config_text.replace(old, new, 1)
 
     # write
-    config_path = tmp_path / f"{geometry_type}.toml"
+    config_path = tmp_path / "grid.toml"
     config_path.write_text(config_text)
 
     return config_path
@@ -461,6 +497,7 @@ def test_load_rejects_bad_points(
 # tangent ogive (curved body, optional cylinder)
 # --------------------------------------------------
 # a short ogive (base at about x = 20 mm, R = 4 mm), so x_end can lie past its base
+# (replacements in its geometry file)
 SHORT_OGIVE = (
     ("length = 0.5", "length = 0.02"),
     ("base_radius = 0.05", "base_radius = 4.0e-3"),
@@ -509,11 +546,20 @@ def test_ogive_grid_ends_at_x_end_on_the_ogive(tmp_path: Path) -> None:
 
 
 def test_ogive_grid_continues_on_a_cylinder_past_the_base(tmp_path: Path) -> None:
-    """With x_end past the base, a cylinder of the base radius carries the wall to x_end."""
+    """With a cylinder in the geometry file, x_end past the base lies on the cylinder."""
 
-    # short ogive, x_end 10 mm past its base
-    replacements = (*SHORT_OGIVE, ("x_end = 0.01", "x_end = 0.03"))
-    config = load_body_fitted_config(write_template(tmp_path, "tangent-ogive", replacements))
+    # short ogive with a 15 mm cylinder, x_end 10 mm past the base
+    geometry_replacements = (
+        *SHORT_OGIVE,
+        ("cylinder_length = 0.0", "cylinder_length = 0.015"),
+    )
+    config_path = write_template(
+        tmp_path,
+        "tangent-ogive",
+        (("x_end = 0.01", "x_end = 0.03"),),
+        geometry_replacements=geometry_replacements,
+    )
+    config = load_body_fitted_config(config_path)
     grid = generate_body_fitted(config).grid
     x_wall = grid.x[:, 0, 0]
     y_wall = grid.y[:, 0, 0]
@@ -530,24 +576,26 @@ def test_ogive_grid_continues_on_a_cylinder_past_the_base(tmp_path: Path) -> Non
 
 
 @pytest.mark.parametrize(
-    ("replacements", "message"),
+    ("replacements", "geometry_replacements", "message"),
     [
-        (
-            (("base_radius = 0.05", "base_radius = 0.05\ncylinder_length = 0.1"),),
-            "cylinder_length isn't used",
-        ),
-        ((("length = 0.5\n", ""),), "length"),
-        ((("x_end = 0.01", "x_end = 50.0e-6"),), "must reach past the nose"),
-        ((("scale = 1.0\n", "scale = 1.0\n\n" + EXTRUDE_TABLE + "\n"),), "axisymmetric"),
+        ((("x_end = 0.01", "x_end = 0.6"),), (), "lies past the end of the body"),
+        ((), (("length = 0.5\n", ""),), "length"),
+        ((("x_end = 0.01", "x_end = 50.0e-6"),), (), "must reach past the nose"),
+        ((("scale = 1.0\n", "scale = 1.0\n\n" + EXTRUDE_TABLE + "\n"),), (), "axisymmetric"),
     ],
 )
 def test_load_rejects_bad_ogive_config(
-    tmp_path: Path, replacements: tuple[tuple[str, str], ...], message: str
+    tmp_path: Path,
+    replacements: tuple[tuple[str, str], ...],
+    geometry_replacements: tuple[tuple[str, str], ...],
+    message: str,
 ) -> None:
-    """cylinder_length comes from x_end, length is required, x_end must pass the nose, no extrusion."""
+    """x_end must lie on the body (past the nose), length is required, no extrusion."""
 
     # write a broken config
-    config_path = write_template(tmp_path, "tangent-ogive", replacements)
+    config_path = write_template(
+        tmp_path, "tangent-ogive", replacements, geometry_replacements=geometry_replacements
+    )
 
     with pytest.raises(ValueError, match=message):
         load_body_fitted_config(config_path)
@@ -564,8 +612,8 @@ def test_cli_init_options_write_runnable_configs(
 ) -> None:
     """init --body/--normal writes a config that runs, and names the options in its header."""
 
-    # init with the options, then run
-    config_path = tmp_path / f"{geometry_type}.toml"
+    # init with the options, then run (with the starter body next to the config)
+    config_path = tmp_path / "grid.toml"
     options = ["--body", body, "--normal", normal]
     result_init = runner.invoke(app, [geometry_type, "init", "-o", str(config_path), *options])
     result_run = runner.invoke(app, [geometry_type, "run", "-c", str(config_path)])
@@ -639,6 +687,7 @@ def test_markers_rename_the_sides_in_the_su2_file(tmp_path: Path) -> None:
         ('wall = "wall"', 'wall = "plate_wall"'),
         ('outflow = "outflow"', 'outflow = "farfield"'),
     )
+    replacements = (*replacements, ("plate_grid.dat", "plate_local.su2"))
     config_path = write_template(tmp_path, replacements=replacements)
     dataset = generate_body_fitted(config_path)
     result = runner.invoke(app, ["plate", "run", "-c", str(config_path)])
@@ -686,24 +735,146 @@ def test_load_rejects_bad_markers(tmp_path: Path, old: str, new: str, message: s
 
 
 # --------------------------------------------------
-# configuration
+# the body: its keys in [geometry], or a geometry file
 # --------------------------------------------------
+def test_the_body_comes_from_its_geometry_file(tmp_path: Path) -> None:
+    """With [geometry] file, the body is the file's: a nose radius changed there changes the grid."""
+
+    # a plate with a 0.2 mm nose in its geometry file
+    config_path = write_config(
+        tmp_path,
+        geometry_replacements=(("nose_radius = 100.0e-6", "nose_radius = 200.0e-6"),),
+        body_in_file=True,
+    )
+    config = load_body_fitted_config(config_path)
+    grid = generate_body_fitted(config).grid
+
+    # check: the body and its file, and the nose points on the 0.2 mm circle around (r_n, 0)
+    assert config.geometry.nose_radius == 200.0e-6
+    assert config.geometry_file == tmp_path / "geometry.toml"
+    x_nose = grid.x[:N_NOSE, 0, 0]
+    y_nose = grid.y[:N_NOSE, 0, 0]
+    np.testing.assert_allclose(np.hypot(x_nose - 200.0e-6, y_nose), 200.0e-6, rtol=1e-12)
+
+
+def test_x_end_defaults_to_the_end_of_the_body(tmp_path: Path) -> None:
+    """Without [domain] x_end the grid ends where the body does (its length here)."""
+
+    # a 20 mm plate, x_end left out
+    config_path = write_config(
+        tmp_path, "x_end = 0.01\n", "", geometry_replacements=(("length = 0.5", "length = 0.02"),)
+    )
+    config = load_body_fitted_config(config_path)
+    grid = generate_body_fitted(config).grid
+
+    # check: x_end filled in, and the last wall point there
+    assert config.domain.x_end == pytest.approx(0.02, rel=1e-14)
+    assert grid.x[-1, 0, 0] == pytest.approx(0.02, rel=1e-14)
+
+
+def test_load_names_a_missing_geometry_file(tmp_path: Path) -> None:
+    """No geometry file: the error names the file and the command that writes it."""
+
+    # a grid config without its geometry file
+    config_path = write_config(tmp_path, body_in_file=True)
+    (tmp_path / "geometry.toml").unlink()
+
+    with pytest.raises(ValueError, match="geometry file not found: .*geometry.toml") as raised:
+        load_body_fitted_config(config_path, expected_type="plate")
+    assert "geometry plate init" in str(raised.value)
+
+
+def test_a_body_in_its_file_and_in_its_keys_gives_the_same_grid(tmp_path: Path) -> None:
+    """The two forms of [geometry] hold the same keys, so the same body gives the same grid."""
+
+    # the starter plate: its keys in the config, and the same body in geometry.toml
+    keys_folder = tmp_path / "keys"
+    file_folder = tmp_path / "file"
+    keys_folder.mkdir()
+    file_folder.mkdir()
+    keys_grid = generate_body_fitted(write_config(keys_folder)).grid
+    file_grid = generate_body_fitted(write_config(file_folder, body_in_file=True)).grid
+
+    # check
+    np.testing.assert_array_equal(keys_grid.x, file_grid.x)
+    np.testing.assert_array_equal(keys_grid.y, file_grid.y)
+
+
 @pytest.mark.parametrize(
     ("old", "new", "message"),
     [
-        ("nose_radius = 100.0e-6", "nose_radius = 100.0e-6\nlength = 0.5", "length isn't used"),
-        ("x_end = 0.01", "x_end = 50.0e-6", "must reach past the nose"),
-        ("first_spacing = 1.0e-6", "first_spacing = 1.0e-2", "first_spacing must be between"),
-        ("n_points = 81", "n_points = 1", "n_points"),
-        ("height = 5.0e-3", "hieght = 5.0e-3", "hieght"),
-        ('type = "plate"', 'type = "cone"', "half_angle"),
+        ("[geometry]\n", '[geometry]\nfile = "geometry.toml"\n', "both a file and body keys"),
+        ("[geometry]\n", "[body]\n", r"\[geometry\] is missing"),
     ],
 )
-def test_load_rejects_bad_config(tmp_path: Path, old: str, new: str, message: str) -> None:
-    """x_end outside the body, a too-large first spacing, bad counts and keys raise."""
+def test_load_takes_the_body_one_way(tmp_path: Path, old: str, new: str, message: str) -> None:
+    """[geometry] holds a file or the body's keys, not both; without [geometry] there's no body."""
 
     # write a broken config
     config_path = write_config(tmp_path, old, new)
+
+    with pytest.raises(ValueError, match=message):
+        load_body_fitted_config(config_path)
+
+
+def test_cli_run_names_the_geometry_file_of_another_type(tmp_path: Path) -> None:
+    """A cone in geometry.toml given to `plate run`: the error names the file and the command."""
+
+    # plate grid config, cone body in its geometry file
+    config_path = write_config(tmp_path, body_in_file=True)
+    write_geometry(tmp_path, "cone")
+    result = runner.invoke(app, ["plate", "run", "-c", str(config_path)])
+
+    # check: one error line naming the geometry file and the cone command
+    assert result.exit_code == 1
+    assert "geometry.toml describes a 'cone' body" in result.output
+    assert "grid-generator cone run" in result.output
+
+
+def test_cli_init_shock_aligned_points_to_the_body_or_checks_against_it(tmp_path: Path) -> None:
+    """--shock-aligned reads geometry.toml: init says how to write it, or checks against it."""
+
+    # no body yet: init writes the config and says where the body comes from
+    options = ["--shock-aligned", "-o", str(tmp_path / "grid.toml")]
+    first = runner.invoke(app, ["cone", "init", *options])
+
+    # a plate body: init --force checks the cone config against it and refuses
+    write_geometry(tmp_path, "plate")
+    second = runner.invoke(app, ["cone", "init", *options, "--force"])
+
+    # check
+    assert first.exit_code == 0, first.output
+    assert "geometry cone init" in first.output
+    assert second.exit_code == 1
+    assert second.output.startswith("error: ")
+    assert "describes a 'plate' body" in second.output
+
+
+# --------------------------------------------------
+# configuration
+# --------------------------------------------------
+@pytest.mark.parametrize(
+    ("old", "new", "geometry_replacements", "message"),
+    [
+        ("x_end = 0.01", "x_end = 0.6", (), "lies past the end of the body"),
+        ("x_end = 0.01", "x_end = 50.0e-6", (), "must reach past the nose"),
+        ("first_spacing = 1.0e-6", "first_spacing = 1.0e-2", (), "first_spacing must be between"),
+        ("n_points = 81", "n_points = 1", (), "n_points"),
+        ("height = 5.0e-3", "hieght = 5.0e-3", (), "hieght"),
+        ("", "", (('type = "plate"', 'type = "cone"'),), "half_angle"),
+    ],
+)
+def test_load_rejects_bad_config(
+    tmp_path: Path,
+    old: str,
+    new: str,
+    geometry_replacements: tuple[tuple[str, str], ...],
+    message: str,
+) -> None:
+    """x_end off the body, a too-large first spacing, bad counts and keys, a bad body raise."""
+
+    # write a broken config
+    config_path = write_config(tmp_path, old, new, geometry_replacements=geometry_replacements)
 
     with pytest.raises(ValueError, match=message):
         load_body_fitted_config(config_path)
@@ -714,9 +885,7 @@ def write_order_2_config(tmp_path: Path, old: str = "", new: str = "") -> Path:
 
     # Gmsh output, second order
     config_text = body_fitted_template("plate")
-    config_text = config_text.replace(
-        'filename = "plate_local.su2"', 'filename = "plate_local.msh"'
-    )
+    config_text = config_text.replace('filename = "plate_grid.dat"', 'filename = "plate_local.msh"')
     config_text = config_text.replace("order = 1", "order = 2")
 
     # optional extra change
@@ -724,9 +893,10 @@ def write_order_2_config(tmp_path: Path, old: str = "", new: str = "") -> Path:
         assert old in config_text
         config_text = config_text.replace(old, new, 1)
 
-    # write
-    config_path = tmp_path / "plate.toml"
+    # write the grid config, and the body it points at
+    config_path = tmp_path / "grid.toml"
     config_path.write_text(config_text)
+    write_geometry(tmp_path, "plate")
 
     return config_path
 
@@ -766,18 +936,20 @@ def test_load_resolves_output_next_to_the_config(
     """A relative output filename is resolved against the config file's folder."""
 
     # check
-    assert plate_config.output.filename == tmp_path / "plate_local.su2"
+    assert plate_config.output.filename == tmp_path / "plate_grid.dat"
 
 
 # --------------------------------------------------
 # CLI end to end
 # --------------------------------------------------
 def test_cli_init_then_run_writes_su2(tmp_path: Path) -> None:
-    """plate init + run writes an SU2 grid with the right size and four markers."""
+    """plate init (default .dat) + run writes an SU2 grid once the file is .su2, with four markers."""
 
-    # init and run
-    config_path = tmp_path / "plate.toml"
+    # init, switch the grid file to SU2, and run
+    config_path = tmp_path / "grid.toml"
     result_init = runner.invoke(app, ["plate", "init", "--output", str(config_path)])
+    config_text = config_path.read_text().replace("plate_grid.dat", "plate_local.su2")
+    config_path.write_text(config_text)
     result_run = runner.invoke(app, ["plate", "run", "-c", str(config_path)])
 
     # check the commands and the report
@@ -796,20 +968,24 @@ def test_cli_init_then_run_writes_su2(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("geometry_type", ["wedge", "cone", "tangent-ogive"])
-def test_cli_init_then_run_other_geometries(tmp_path: Path, geometry_type: str) -> None:
-    """wedge and cone init + run write their own template and grid with the default names."""
+def test_cli_init_then_run_other_geometries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, geometry_type: str
+) -> None:
+    """wedge, cone and ogive init + run work with the default name, grid.toml, and nothing else."""
 
-    # init and run with the default config name, inside tmp_path
-    config_path = tmp_path / f"{geometry_type}.toml"
-    result_init = runner.invoke(app, [geometry_type, "init", "--output", str(config_path)])
-    result_run = runner.invoke(app, [geometry_type, "run", "-c", str(config_path)])
+    # init and run with the default config name, inside tmp_path (the body is in grid.toml)
+    monkeypatch.chdir(tmp_path)
+    result_init = runner.invoke(app, [geometry_type, "init"])
+    result_run = runner.invoke(app, [geometry_type, "run"])
 
-    # check the commands, the template's type and the output file
+    # check the commands, the template's geometry file and the output file
+    config_path = tmp_path / "grid.toml"
     assert result_init.exit_code == 0, result_init.output
     assert result_run.exit_code == 0, result_run.output
-    assert f'type = "{geometry_type}"' in config_path.read_text()
+    assert f'[geometry]\n# type marker\ntype = "{geometry_type}"' in config_path.read_text()
+    assert not (tmp_path / "geometry.toml").exists()
     assert f"Generated {geometry_type} grid" in result_run.output
-    assert (tmp_path / f"{geometry_type}_local.su2").exists()
+    assert (tmp_path / f"{geometry_type}_grid.dat").exists()
 
 
 def test_cli_run_rejects_a_config_for_another_geometry(tmp_path: Path) -> None:
@@ -822,15 +998,16 @@ def test_cli_run_rejects_a_config_for_another_geometry(tmp_path: Path) -> None:
     # check: error points at the plate command, nothing written
     assert result.exit_code == 1
     assert "grid-generator plate run" in result.output
-    assert not (tmp_path / "plate_local.su2").exists()
+    assert not (tmp_path / "plate_grid.dat").exists()
 
 
 def test_cli_su2_reads_back_with_the_same_points(tmp_path: Path) -> None:
     """cfd-io reads the SU2 file back with the generated wall and outer points."""
 
-    # init and run
-    config_path = tmp_path / "plate.toml"
+    # init, switch the grid file to SU2, and run
+    config_path = tmp_path / "grid.toml"
     runner.invoke(app, ["plate", "init", "--output", str(config_path)])
+    config_path.write_text(config_path.read_text().replace("plate_grid.dat", "plate_local.su2"))
     runner.invoke(app, ["plate", "run", "-c", str(config_path)])
 
     # read back and compare point clouds (SU2 is unstructured, so compare sorted coordinates)
@@ -847,7 +1024,7 @@ def test_cli_hdf5_keeps_points_and_markers(tmp_path: Path) -> None:
     """HDF5 output reads back with the same structured points and the boundary markers."""
 
     # config writing HDF5 instead of SU2
-    config_path = write_config(tmp_path, "plate_local.su2", "plate_local.h5")
+    config_path = write_config(tmp_path, "plate_grid.dat", "plate_local.h5")
     result = runner.invoke(app, ["plate", "run", "-c", str(config_path)])
     assert result.exit_code == 0, result.output
 

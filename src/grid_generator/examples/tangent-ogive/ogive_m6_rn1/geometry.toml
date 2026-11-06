@@ -1,0 +1,32 @@
+# Body of the example ogive_m6_rn1: tangent ogive, 1 mm nose radius, 0.5 m long, 50 mm base
+# grid-generator (grid.toml) and flow-theory read it: geometry = "geometry.toml"
+# moldline of the body: geometry tangent-ogive run
+
+# Spherically blunted tangent ogive, axisymmetric about the x axis; the moldline is
+# its meridian. The ogive is a circular arc tangent to the base cylinder; the nose
+# sphere sits on the axis, tangent to that arc.
+# Stagnation point at the origin, x along the axis, y radial.
+[geometry]
+# type marker
+type = "tangent-ogive"
+# nose radius in [m] (smaller than base_radius)
+nose_radius = 1.0e-3
+# length of the sharp ogive, tip to base, in [m]; blunting makes the body slightly
+# shorter (here it ends at x = 0.496 m)
+length = 0.5
+# base radius in [m] (smaller than length)
+base_radius = 0.05
+# length of the cylinder after the base in [m]; 0 for none (then no n_cylinder)
+cylinder_length = 0.0
+
+# Points per piece of the moldline, each count including both ends of the piece.
+[points]
+# number of points on the nose arc (80 = about 1 deg steps on the 78.7 deg arc)
+n_nose = 80
+# number of points on the ogive
+n_body = 200
+
+# The path is relative to this file.
+[output]
+# moldline file: .csv, or .dat for Tecplot ASCII
+file = "tangent-ogive.csv"

@@ -1,0 +1,25 @@
+# Body of the golden grid tangent_ogive (tests/test_golden.py), frozen with it.
+# Spherically blunted tangent ogive, axisymmetric about the x axis.
+[geometry]
+# type marker
+type = "tangent-ogive"
+# nose radius in [m]
+nose_radius = 0.0001
+# length of the sharp ogive, tip to base, in [m]
+length = 0.5
+# base radius in [m]
+base_radius = 0.05
+# length of the cylinder after the base in [m] (the grid's x_end past the base)
+cylinder_length = 0.0
+
+# Points per piece of the moldline (geometry <type> run only).
+[points]
+# number of points on the nose arc
+n_nose = 91
+# number of points on the body
+n_body = 200
+
+# The path is relative to this file.
+[output]
+# moldline file (geometry <type> run only)
+file = "tangent_ogive_moldline.csv"

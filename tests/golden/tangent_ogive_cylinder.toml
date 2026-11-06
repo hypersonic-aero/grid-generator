@@ -1,21 +1,10 @@
 # Golden grid: a frozen config whose grid must not change (tests/test_golden.py).
 # A deliberate change: rerun tests/golden/make_golden.py, and say why in the commit.
 
-# Spherically blunted tangent ogive, axisymmetric about the x axis, same contract as
-# canonical-geometries (geometry tangent-ogive init) without cylinder_length: when
-# [domain] x_end lies past the ogive base, a cylinder carries the body on to x_end.
-# The grid is the meridian plane: run the solver axisymmetric.
-# Stagnation point at the origin, x along the axis, y radial.
+# Spherically blunted tangent ogive, axisymmetric about the x axis; the body is read from tangent_ogive_cylinder_geometry.toml
 [geometry]
-# type marker
-type = "tangent-ogive"
-# nose radius in [m] (smaller than base_radius)
-nose_radius = 100.0e-6
-# length of the sharp ogive, tip to base, in [m]; blunting makes the body slightly
-# shorter (the sharp tip would lie upstream of the stagnation point)
-length = 0.5
-# base radius in [m] (smaller than length)
-base_radius = 0.05
+# geometry file, relative to this file
+file = "tangent_ogive_cylinder_geometry.toml"
 
 # Extent of the grid.
 [domain]

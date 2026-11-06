@@ -14,9 +14,9 @@ pip install grid-generator
 Create a starter configuration, edit it, and generate the grid:
 
 ```bash
-# initialize grid generator
+# initialize grid generator: writes grid.toml (the body in its [geometry] table)
 grid-generator plate init
-# run grid generator (reads plate.toml, the file init writes)
+# run grid generator (reads grid.toml, the file init writes)
 grid-generator plate run
 ```
 

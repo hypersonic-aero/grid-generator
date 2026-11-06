@@ -1,7 +1,7 @@
 """Golden grids: the grids of frozen configs (constant-height, and one shock-aligned) must not change.
 
-tests/golden holds the configs and their reference coordinates (written by
-tests/golden/make_golden.py). A deliberate change to these grids reruns that script
+tests/golden holds the configs, the bodies they point at (*_geometry.toml), and their
+reference coordinates (written by tests/golden/make_golden.py). A deliberate change to these grids reruns that script
 and says why in the commit; any other difference is a regression.
 
 The comparison allows round-off (1e-12 of the grid's extent): the sines, cosines and
@@ -24,7 +24,10 @@ from grid_generator import generate_body_fitted
 # constants
 # --------------------------------------------------
 GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
-GOLDEN_CONFIGS = sorted(GOLDEN_DIR.glob("*.toml"))
+# the grid configs (each body's geometry file, *_geometry.toml, sits next to its config)
+GOLDEN_CONFIGS = sorted(
+    path for path in GOLDEN_DIR.glob("*.toml") if not path.stem.endswith("_geometry")
+)
 
 # allowed difference, relative to the grid's extent
 TOLERANCE = 1.0e-12

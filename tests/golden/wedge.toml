@@ -1,17 +1,10 @@
 # Golden grid: a frozen config whose grid must not change (tests/test_golden.py).
 # A deliberate change: rerun tests/golden/make_golden.py, and say why in the commit.
 
-# Planar blunted wedge (upper half), same contract as canonical-geometries
-# (geometry wedge init) without length: the wedge ends at [domain] x_end.
-# The nose arc runs to 90 deg - half_angle, tangent to the body.
-# Stagnation point at the origin, x downstream, y up.
+# Planar blunted wedge (upper half); the body is read from wedge_geometry.toml
 [geometry]
-# type marker
-type = "wedge"
-# nose radius in [m]
-nose_radius = 100.0e-6
-# half-angle of the body in [deg]
-half_angle = 7.0
+# geometry file, relative to this file
+file = "wedge_geometry.toml"
 
 # Extent of the grid.
 [domain]

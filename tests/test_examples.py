@@ -53,7 +53,7 @@ def test_every_example_copies_and_runs(
 
     # check: the run succeeded and wrote the grid its config names
     assert run_result.exit_code == 0, run_result.output
-    config = tomllib.loads(Path(f"{geometry_type}.toml").read_text(encoding="utf-8"))
+    config = tomllib.loads(Path("grid.toml").read_text(encoding="utf-8"))
     assert Path(config["output"]["filename"]).exists()
 
 

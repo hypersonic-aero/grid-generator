@@ -56,6 +56,7 @@ from grid_generator.distributions import DistributionSpec, EquidistantSpec, buil
 from grid_generator.quality import folded_cells
 from grid_generator.shock import (
     AXIS_TOLERANCE,
+    check_standoff,
     extend_shock,
     offset_shock,
     points_on_curve,
@@ -314,6 +315,10 @@ def _shock_line_grid(
     curve_name = f"shock curve ({shock.curve})"
 
     shock_x, shock_y = start_on_axis(shock_x, shock_y, config.geometry.nose_radius, curve_name)
+
+    # check: the curve belongs to this body (its distance ahead of the nose fits the nose)
+    check_standoff(shock_x, config.geometry.nose_radius, curve_name)
+
     shock_x, shock_y = extend_shock(
         shock_x, shock_y, x_wall, y_wall, shock.margin_factor, shock.min_offset, curve_name
     )

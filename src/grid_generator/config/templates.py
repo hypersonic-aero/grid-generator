@@ -1,7 +1,7 @@
 """Starter configurations written by `grid-generator <command> init`.
 
 The templates are put together from TOML blocks: per geometry (description,
-[geometry], [domain]), and shared blocks for the points, sweep, markers and output. The body
+the body in [geometry]: its keys, or a geometry file with --shock-aligned; [domain]), and shared blocks for the points, sweep, markers and output. The body
 and wall-normal distributions each have a choice of block (init --body, --normal),
 the sweep block is optional (init --sweep: revolve for axisymmetric bodies, extrude
 for planar ones), a shock-aligned grid replaces the constant
@@ -98,68 +98,76 @@ CARTESIAN_DEFAULT_DIMS = 2
 
 
 # --------------------------------------------------
-# body-fitted grids: description, [geometry] and [domain], one block per geometry
+# body-fitted grids: description, the body ([geometry]) and [domain], per geometry
 # --------------------------------------------------
+# what the grid is, per geometry (keys are the [geometry] type values)
+BODY_FITTED_DESCRIPTIONS: dict[str, str] = {
+    "plate": """\
+# Flat plate with a circular leading edge (upper half).
+# Stagnation point at the origin, x downstream, y up.
+""",
+    "wedge": """\
+# Planar blunted wedge (upper half).
+# Stagnation point at the origin, x downstream, y up.
+""",
+    "cone": """\
+# Sphere-cone, axisymmetric about the x axis. The grid is the meridian plane: run the
+# solver axisymmetric. Stagnation point at the origin, x along the axis, y radial.
+""",
+    "tangent-ogive": """\
+# Spherically blunted tangent ogive, axisymmetric about the x axis. The grid is the
+# meridian plane: run the solver axisymmetric. Stagnation point at the origin, x along
+# the axis, y radial.
+""",
+}
+
+# the body given right here (plain init): canonical-geometries' [geometry] keys, the
+# keys geometry.toml holds, so a body moves between the two forms unchanged
 BODY_FITTED_GEOMETRY_BLOCKS: dict[str, str] = {
     "plate": """\
-# Flat plate with a circular leading edge (upper half), same contract as
-# canonical-geometries (geometry plate init) without length: the plate ends at
-# [domain] x_end.
-# Stagnation point at the origin, x downstream, y up.
+# The body, right here, with the keys of canonical-geometries' geometry.toml. To share
+# it with flow-theory (a shock-aligned grid), replace the keys with
+# file = "geometry.toml" (written by: geometry plate init).
 [geometry]
 # type marker
 type = "plate"
 # nose radius in [m]
 nose_radius = 100.0e-6
-
-# Extent of the grid.
-[domain]
-# end of the grid (and of the body) along x, measured from nose tip in [m]
-x_end = 0.01
+# length of the plate, measured from the nose tip in [m]
+length = 0.5
 """,
     "wedge": """\
-# Planar blunted wedge (upper half), same contract as canonical-geometries
-# (geometry wedge init) without length: the wedge ends at [domain] x_end.
-# The nose arc runs to 90 deg - half_angle, tangent to the body.
-# Stagnation point at the origin, x downstream, y up.
+# The body, right here, with the keys of canonical-geometries' geometry.toml. To share
+# it with flow-theory (a shock-aligned grid), replace the keys with
+# file = "geometry.toml" (written by: geometry wedge init).
 [geometry]
 # type marker
 type = "wedge"
 # nose radius in [m]
 nose_radius = 100.0e-6
+# length of the wedge, measured axially from the nose tip in [m]
+length = 0.5
 # half-angle of the body in [deg]
 half_angle = 7.0
-
-# Extent of the grid.
-[domain]
-# end of the grid (and of the body) along x, measured from nose tip in [m]
-x_end = 0.01
 """,
     "cone": """\
-# Sphere-cone, axisymmetric about the x axis, same contract as canonical-geometries
-# (geometry cone init) without length: the cone ends at [domain] x_end.
-# The grid is the meridian plane: run the solver axisymmetric.
-# The nose arc runs to 90 deg - half_angle, tangent to the cone.
-# Stagnation point at the origin, x along the axis, y radial.
+# The body, right here, with the keys of canonical-geometries' geometry.toml. To share
+# it with flow-theory (a shock-aligned grid), replace the keys with
+# file = "geometry.toml" (written by: geometry cone init).
 [geometry]
 # type marker
 type = "cone"
 # nose radius in [m]
 nose_radius = 100.0e-6
+# length of the cone, measured axially from the nose tip in [m]
+length = 0.5
 # cone half-angle in [deg]
 half_angle = 7.0
-
-# Extent of the grid.
-[domain]
-# end of the grid (and of the body) along x, measured from nose tip in [m]
-x_end = 0.01
 """,
     "tangent-ogive": """\
-# Spherically blunted tangent ogive, axisymmetric about the x axis, same contract as
-# canonical-geometries (geometry tangent-ogive init) without cylinder_length: when
-# [domain] x_end lies past the ogive base, a cylinder carries the body on to x_end.
-# The grid is the meridian plane: run the solver axisymmetric.
-# Stagnation point at the origin, x along the axis, y radial.
+# The body, right here, with the keys of canonical-geometries' geometry.toml. To share
+# it with flow-theory (a shock-aligned grid), replace the keys with
+# file = "geometry.toml" (written by: geometry tangent-ogive init).
 [geometry]
 # type marker
 type = "tangent-ogive"
@@ -170,11 +178,40 @@ nose_radius = 100.0e-6
 length = 0.5
 # base radius in [m] (smaller than length)
 base_radius = 0.05
+# length of a cylinder after the base in [m]; 0 for none
+cylinder_length = 0.0
+""",
+}
 
+# the body from a geometry file (init --shock-aligned): flow-theory computes the shock
+# curve for the same file, so the grid and its shock share one body
+BODY_FITTED_FILE_BLOCK = """\
+# The body: a geometry file (write it with: geometry {geometry_type} init); flow-theory
+# reads the same file, so the shock curve and the grid share one body. For a grid on
+# its own, the body's keys (type, nose_radius, length, ...) can replace file.
+[geometry]
+# geometry file, relative to this file
+file = "geometry.toml"
+"""
+
+# [domain]: where the grid ends on the body (the ogive's x_end may lie on its cylinder)
+DOMAIN_LINES = """\
+# Extent of the grid.
+[domain]
+# end of the grid along x, measured from nose tip in [m]; on the body (leave it out to
+# end the grid where the body ends)
+x_end = 0.01
+"""
+DOMAIN_BLOCKS: dict[str, str] = {
+    "plate": DOMAIN_LINES,
+    "wedge": DOMAIN_LINES,
+    "cone": DOMAIN_LINES,
+    "tangent-ogive": """\
 # Extent of the grid.
 [domain]
 # end of the grid along x, measured from nose tip in [m]: on the ogive, or past its
-# base (then on a cylinder of the base radius)
+# base on the cylinder (cylinder_length); leave it out to end the grid where the body
+# ends
 x_end = 0.01
 """,
 }
@@ -388,8 +425,9 @@ sweep_high = "sweep_high"
 BODY_FITTED_OUTPUT_BLOCK = """\
 # The path is relative to this file.
 [output]
-# grid file; the extension picks the format via cfd-io (.su2, .h5, .p2dfmt, .msh, ...)
-filename = "{geometry_type}_local.su2"
+# grid file; the extension picks the format via cfd-io: .dat (Tecplot ASCII, to look at
+# the grid), .su2 or .msh (solver input), .h5, .p2dfmt, ...
+filename = "{geometry_type}_grid.dat"
 # element order, for .msh only: 1 (straight-edged elements) or 2 (curved 9-node quads,
 # 27-node hexahedra in 3D, for high-order solvers; needs odd point counts in every
 # [points] table and in [sweep])
@@ -516,12 +554,21 @@ def body_fitted_template(
         options += " --shock-aligned"
     header = (
         f"# Generated by: grid-generator {geometry_type} init{options}\n"
-        f"# Edit this file, then run: grid-generator {geometry_type} run -c {geometry_type}.toml\n"
+        f"# Edit this file, then run: grid-generator {geometry_type} run\n"
         "# The values are a starting point to edit, not a tested case.\n"
     )
 
+    # the body: right here for a grid on its own; from a geometry file for a
+    # shock-aligned grid, whose shock curve flow-theory computes for the same file
+    if shock_aligned:
+        body_block = BODY_FITTED_FILE_BLOCK.format(geometry_type=geometry_type)
+    else:
+        body_block = BODY_FITTED_GEOMETRY_BLOCKS[geometry_type]
+    geometry_block = "\n".join(
+        [BODY_FITTED_DESCRIPTIONS[geometry_type], body_block, DOMAIN_BLOCKS[geometry_type]]
+    )
+
     # geometry and [domain], ended by the constant height, or followed by [shock]
-    geometry_block = BODY_FITTED_GEOMETRY_BLOCKS[geometry_type]
     if shock_aligned:
         outer_blocks = [geometry_block, SHOCK_BLOCK]
         normal_block = SHOCK_LINE_POINTS_BLOCK

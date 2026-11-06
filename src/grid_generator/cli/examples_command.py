@@ -68,7 +68,7 @@ def list_examples(geometry_type: str) -> dict[str, str]:
 
     # every folder with the type's config is an example
     examples: dict[str, str] = {}
-    config_name = f"{geometry_type}.toml"
+    config_name = "grid.toml"
     for folder in sorted(root.iterdir(), key=lambda item: item.name):
         config = folder / config_name
         if folder.is_dir() and config.is_file():

@@ -1,0 +1,25 @@
+# Body of the example plate_m6_rn0p1: flat plate, 0.1 mm leading-edge radius, 50 mm long
+# grid-generator (grid.toml) and flow-theory read it: geometry = "geometry.toml"
+# moldline of the body: geometry plate run
+
+# Flat plate with a circular leading edge (upper half).
+# Stagnation point at the origin, x downstream, y up.
+[geometry]
+# type marker
+type = "plate"
+# nose (leading-edge) radius in [m]
+nose_radius = 1.0e-4
+# length of flat plate, measured from nose tip in [m]
+length = 0.05
+
+# Points per piece of the moldline, each count including both ends of the piece.
+[points]
+# number of points on the nose arc (91 = 1 deg steps on the 90 deg arc)
+n_nose = 91
+# number of points on the flat part of the plate
+n_body = 200
+
+# The path is relative to this file.
+[output]
+# moldline file: .csv, or .dat for Tecplot ASCII
+file = "plate.csv"

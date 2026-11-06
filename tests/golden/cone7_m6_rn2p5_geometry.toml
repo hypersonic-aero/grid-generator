@@ -1,0 +1,23 @@
+# Body of the golden grid cone7_m6_rn2p5 (tests/test_golden.py), frozen with it.
+# Sphere-cone, axisymmetric about the x axis.
+[geometry]
+# type marker
+type = "cone"
+# nose radius in [m]
+nose_radius = 0.0025
+# length of the body, measured axially from nose tip in [m] (the grid's x_end)
+length = 0.5
+# half-angle of the body in [deg]
+half_angle = 7.0
+
+# Points per piece of the moldline (geometry <type> run only).
+[points]
+# number of points on the nose arc
+n_nose = 91
+# number of points on the body
+n_body = 200
+
+# The path is relative to this file.
+[output]
+# moldline file (geometry <type> run only)
+file = "cone7_m6_rn2p5_moldline.csv"

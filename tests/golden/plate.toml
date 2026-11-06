@@ -1,15 +1,10 @@
 # Golden grid: a frozen config whose grid must not change (tests/test_golden.py).
 # A deliberate change: rerun tests/golden/make_golden.py, and say why in the commit.
 
-# Flat plate with a circular leading edge (upper half), same contract as
-# canonical-geometries (geometry plate init) without length: the plate ends at
-# [domain] x_end.
-# Stagnation point at the origin, x downstream, y up.
+# Flat plate with a circular leading edge (upper half); the body is read from plate_geometry.toml
 [geometry]
-# type marker
-type = "plate"
-# nose radius in [m]
-nose_radius = 100.0e-6
+# geometry file, relative to this file
+file = "plate_geometry.toml"
 
 # Extent of the grid.
 [domain]

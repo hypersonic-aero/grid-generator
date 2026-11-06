@@ -1,11 +1,12 @@
 """Configuration contract for body-fitted grids: constant height or shock-aligned, 2D or swept to 3D.
 
-The [geometry] table is canonical-geometries' contract, without the keys that only
-say how far the body extends: the grid's body ends at [domain] x_end. For plate,
-wedge and cone the loader fills length in from x_end; for the tangent ogive (whose
-length is a shape parameter) a cylinder carries the body on when x_end lies past the
-base. The config is parsed and validated with pydantic; the generator works from the
-validated object.
+The [geometry] table gives the body one of two ways, with canonical-geometries'
+keys either way: right there (type, nose_radius, length, ...), for a grid on its own,
+or as file = a geometry file (e.g. geometry.toml, written by `geometry <type> init`),
+read with canonical-geometries' load_geometry. flow-theory reads the same file, so a
+shock-aligned grid and its shock curve share one body. The grid ends at [domain]
+x_end, on the body: by default where the body ends. The config is parsed and
+validated with pydantic; the generator works from the validated object.
 
 The [points] tables use the same distribution types and keys as the Cartesian axes,
 without start and end: those come from the geometry and [domain]. The body starts at
@@ -32,7 +33,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from canonical_geometries import Profile2D
-from canonical_geometries.config import GeometryConfig
+from canonical_geometries.config import GeometryConfig, load_geometry
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -57,15 +58,6 @@ from grid_generator.distributions.models import DistributionSpec, GeometricSpec,
 PLOT3D_2D_SUFFIX = ".p2dfmt"
 PLOT3D_3D_SUFFIX = ".p3dfmt"
 
-# [geometry] key per type that only says how far the body extends; [domain] x_end
-# sets it instead (the tangent ogive's length is a shape parameter and stays)
-EXTENT_KEYS = {
-    "plate": "length",
-    "wedge": "length",
-    "cone": "length",
-    "tangent-ogive": "cylinder_length",
-}
-
 # [markers] keys that only apply to a swept (3D) grid
 SWEEP_MARKER_KEYS = ("sweep_low", "sweep_high")
 
@@ -83,7 +75,11 @@ class DomainConfig(BaseModel):
     # reject misspelled keys
     model_config = ConfigDict(extra="forbid")
 
-    x_end: float = Field(gt=0.0, description="End of the grid along x, from the nose tip [m]")
+    x_end: float | None = Field(
+        default=None,
+        gt=0.0,
+        description="End of the grid along x, from the nose tip [m]; on the body (default: its end)",
+    )
     height: float | None = Field(
         default=None,
         gt=0.0,
@@ -255,52 +251,28 @@ class OutputConfig(BaseModel):
 # whole file
 # --------------------------------------------------
 class BodyFittedConfig(BaseModel):
-    """Contents of a body-fitted grid TOML file."""
+    """Contents of a body-fitted grid TOML file.
+
+    geometry is the body: its keys from the [geometry] table, or the body read from the
+    geometry file that [geometry] file names (load_body_fitted_config reads it, and
+    keeps the path in geometry_file).
+    """
 
     # reject unknown sections
     model_config = ConfigDict(extra="forbid")
 
     geometry: GeometryConfig
-    domain: DomainConfig
+    geometry_file: Path | None = Field(
+        default=None,
+        description="Geometry file the body was read from (set by the loader, for messages); "
+        "None for a body given by its keys",
+    )
+    domain: DomainConfig = Field(default_factory=DomainConfig)
     points: PointsConfig
     output: OutputConfig
     sweep: Annotated[RevolveConfig | ExtrudeConfig, Field(discriminator="type")] | None = None
     markers: MarkersConfig = Field(default_factory=MarkersConfig)
     shock: ShockConfig | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _end_the_body_at_x_end(cls, data: Any) -> Any:
-        """Reject the [geometry] extent key; fill in length from [domain] x_end where it applies.
-
-        The grid's body ends at x_end, so a separate body extent would only be a
-        second number to keep in sync. For plate, wedge and cone, length is filled in
-        from x_end; the tangent ogive's cylinder is added in build_profile.
-        """
-
-        # only raw tables need filling in; missing tables are reported by the fields
-        if not isinstance(data, dict):
-            return data
-        geometry = data.get("geometry")
-        domain = data.get("domain")
-        if not isinstance(geometry, dict) or not isinstance(domain, dict):
-            return data
-
-        # check: no extent of its own (unknown types are reported by [geometry])
-        extent_key = EXTENT_KEYS.get(geometry.get("type"))
-        if extent_key is not None and extent_key in geometry:
-            raise ValueError(
-                f"[geometry] {extent_key} isn't used: the grid's body ends at [domain] x_end; "
-                f"remove {extent_key}"
-            )
-
-        # fill in length where it is only the extent (a missing x_end is reported by [domain])
-        filled = data
-        if extent_key == "length" and "x_end" in domain:
-            filled = dict(data)
-            filled["geometry"] = {**geometry, "length": domain["x_end"]}
-
-        return filled
 
     @model_validator(mode="after")
     def _check_one_layout(self) -> BodyFittedConfig:
@@ -358,18 +330,36 @@ class BodyFittedConfig(BaseModel):
 
     @model_validator(mode="after")
     def _check_domain_fits_the_geometry(self) -> BodyFittedConfig:
-        """Check x_end lies on the body, and the point distributions fit the geometry."""
+        """Check x_end lies on the body, and the point distributions fit the geometry.
 
-        # x_end must reach past the nose (building a plate, wedge or cone profile checks this)
+        Without [domain] x_end the grid ends where the body does; it is filled in here,
+        so the rest of the code always has a number.
+        """
+
+        # the body as its geometry file gives it, and where it ends
+        profile = self.build_profile()
+        x_body_end = float(profile.point(profile.total_length)[0])
+        if self.geometry_file is not None:
+            body_source = str(self.geometry_file)
+        else:
+            body_source = "[geometry]"
+
+        # x_end: the body's end unless given (the model isn't frozen, so it is set here)
+        if self.domain.x_end is None:
+            self.domain.x_end = x_body_end
         x_end = self.domain.x_end
-        try:
-            profile = self.build_profile()
-        except ValueError as error:
-            raise ValueError(
-                f"[domain] x_end ({x_end}) must reach past the nose: {error}"
-            ) from None
 
-        # same check for every body, against the end of the nose
+        # check: on the body, up to round-off (the wall points are found to the same
+        # tolerance, see config.points.arc_length_at_x)
+        tolerance = 1e-12 * max(abs(x_body_end), 1.0)
+        if x_end > x_body_end + tolerance:
+            raise ValueError(
+                f"[domain] x_end = {x_end:.6g} m lies past the end of the body in "
+                f"{body_source} (x = {x_body_end:.6g} m): lengthen the body there, or end "
+                "the grid earlier"
+            )
+
+        # x_end must reach past the nose, for every body
         s_junction = float(profile.junctions[0])
         x_junction = float(profile.point(s_junction)[0])
         if x_end <= x_junction:
@@ -452,23 +442,14 @@ class BodyFittedConfig(BaseModel):
         return self
 
     def build_profile(self) -> Profile2D:
-        """Build the wall profile, from the stagnation point to (at least) x_end.
+        """Build the wall profile, from the stagnation point to the end of the body.
 
-        Plate, wedge and cone end at x_end (their length is x_end). The tangent ogive
-        ends at its base, or, when x_end lies past the base, at x_end on a cylinder;
-        when x_end lies on the ogive, the grid stops there (body_distribution).
+        The body is the geometry file's, whole; the grid stops at x_end on it
+        (body_distribution).
         """
 
         # build the body as given
         profile = self.geometry.build()
-
-        # tangent ogive: a cylinder carries the body on to an x_end past the base
-        if self.geometry.type == "tangent-ogive":
-            x_base, _ = profile.base_point
-            if self.domain.x_end > x_base:
-                cylinder_length = self.domain.x_end - x_base
-                extended = self.geometry.model_copy(update={"cylinder_length": cylinder_length})
-                profile = extended.build()
 
         return profile
 
@@ -572,21 +553,27 @@ class BodyFittedConfig(BaseModel):
 def load_body_fitted_config(path: str | Path, expected_type: str | None = None) -> BodyFittedConfig:
     """Read and validate a body-fitted grid TOML file.
 
-    A relative output filename is resolved against the folder holding the config file.
+    The [geometry] table gives the body one of two ways: its keys right there
+    (canonical-geometries' [geometry] contract, length included), or file = a geometry
+    file (e.g. geometry.toml, shared with flow-theory) read with canonical-geometries'
+    load_geometry. Relative paths (the geometry file, the output file, the shock curve)
+    are resolved against the folder holding the config file.
 
     Args:
         path: Configuration file.
-        expected_type: If given, the [geometry] type the file must describe
+        expected_type: If given, the geometry type the body must be
             (e.g. "cone" when called from `grid-generator cone run`).
 
     Returns:
         Validated configuration.
 
     Raises:
-        OSError: If the file can't be read.
-        tomllib.TOMLDecodeError: If the file isn't valid TOML.
+        OSError: If the config file can't be read.
+        tomllib.TOMLDecodeError: If the config file isn't valid TOML.
         pydantic.ValidationError: If a value is missing, misspelled or out of range.
-        ValueError: If the file describes a different geometry type than expected.
+        ValueError: If [geometry] is missing or gives both a file and body keys, the
+            geometry file is missing or invalid (the message names it), or the body is
+            a different geometry type than expected.
     """
 
     # convert to Path object
@@ -596,14 +583,57 @@ def load_body_fitted_config(path: str | Path, expected_type: str | None = None) 
     with path.open("rb") as stream:
         raw_dict = tomllib.load(stream)
 
-    # validate
+    # validate inputs: [geometry] is a table, with a file or the body's keys
+    geometry_table = raw_dict.get("geometry")
+    if not isinstance(geometry_table, dict):
+        raise ValueError(
+            f"{path}: [geometry] is missing: give the body's keys there (type, "
+            'nose_radius, length, ...) or its geometry file (file = "geometry.toml")'
+        )
+    if "geometry_file" in raw_dict:
+        raise ValueError(f"{path}: geometry_file isn't a key; give the body in [geometry]")
+
+    # the body from a geometry file: read it (relative to this config file); a body
+    # given by its keys stays in the table and is checked with the rest below
+    geometry_file = None
+    if "file" in geometry_table:
+        # check: the file or the keys, not both, and a path
+        body_keys = sorted(key for key in geometry_table if key != "file")
+        if body_keys:
+            raise ValueError(
+                f"{path}: [geometry] gives both a file and body keys "
+                f"({', '.join(body_keys)}); give one of them"
+            )
+        if not isinstance(geometry_table["file"], str):
+            raise ValueError(f'{path}: [geometry] file must be a path, e.g. "geometry.toml"')
+
+        # read
+        geometry_file = path.parent / geometry_table["file"]
+        init_command = f"geometry {expected_type or '<type>'} init"
+        try:
+            geometry = load_geometry(geometry_file)
+        except FileNotFoundError:
+            raise ValueError(
+                f"geometry file not found: {geometry_file} (write it with: {init_command})"
+            ) from None
+        except ValueError as error:
+            # an invalid geometry file (pydantic's ValidationError and TOML errors are
+            # ValueErrors): say which file it is
+            raise ValueError(f"{geometry_file}: {error}") from None
+        raw_dict = {**raw_dict, "geometry": geometry, "geometry_file": geometry_file}
+
+    # validate (a body given by its keys is checked here, as [geometry])
     config = BodyFittedConfig.model_validate(raw_dict)
 
-    # check the file matches the command it was given to
+    # check the body matches the command it was given to
     geometry_type = config.geometry.type
+    if geometry_file is not None:
+        body_source = str(geometry_file)
+    else:
+        body_source = str(path)
     if expected_type is not None and geometry_type != expected_type:
         raise ValueError(
-            f"{path} describes a '{geometry_type}' geometry, not '{expected_type}'; "
+            f"{body_source} describes a '{geometry_type}' body, not '{expected_type}'; "
             f"run it with: grid-generator {geometry_type} run -c {path}"
         )
 

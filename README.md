@@ -38,27 +38,37 @@ print(dataset.grid.shape)
 ```
 
 Body-fitted 2D grids around blunt bodies (blunted plate, wedge, sphere-cone, tangent ogive)
-use the geometry definitions from
-[canonical-geometries](https://github.com/uahypersonics/canonical-geometries):
+take the body in `[geometry]`, with the keys of
+[canonical-geometries](https://github.com/uahypersonics/canonical-geometries)
+(`type`, `nose_radius`, `length`, ...): right in the config for a grid on its own, or as
+a geometry file, `file = "geometry.toml"` (written by `geometry <type> init`), which
+flow-theory reads too:
 
 ```bash
-grid-generator plate init
+grid-generator plate init    # writes grid.toml, the body in its [geometry] table
 grid-generator plate run
 ```
 
-`run` reads the file `init` writes (`plate.toml`); pass another one with `-c`.
+`run` reads the file `init` writes (`grid.toml`); pass another one with `-c`. The grid
+ends at `[domain] x_end` on the body, or where the body ends when `x_end` is left out.
 
 For a shock-aligned grid the bow shock is a grid line: the same index `j` on every
 wall-normal line, so a solution's captured shock stays in one row of cells.
 `init --shock-aligned` writes that layout; it reads the shock curve from a CSV file,
 by default `shock_shape.csv`: what `flow-theory shock-shape run` writes with
 `output = "shock_shape.csv"`. A shock taken from a CFD solution (`flow-props shock`)
-works the same way. Grid line `i = 0` is the symmetry line on the axis `y = 0`, so the
+works the same way. Its body is `geometry.toml` (`[geometry] file`), the file
+flow-theory computes the curve for, so the grid and its shock share one body; a curve
+that stands implausibly far from this body's nose (made for another nose radius) is
+refused. Grid line `i = 0` is the symmetry line on the axis `y = 0`, so the
 curve starts there; a curve that starts a little above it (a shock from cell-centre
 data starts half a cell away) is continued to the axis, with a warning:
 
 ```bash
-grid-generator cone init --shock-aligned
+geometry cone init                          # the body: geometry.toml
+flow-theory shock-shape init                # set output = "shock_shape.csv"
+flow-theory shock-shape run
+grid-generator cone init --shock-aligned    # grid.toml: [geometry] file = "geometry.toml"
 grid-generator cone run
 ```
 
@@ -68,7 +78,7 @@ wedge extruded along z (`width`). The plane `k = 0` is the 2D grid exactly, and 
 side faces (`[markers]` `sweep_low`, `sweep_high`) match point for point, for periodic
 or symmetry conditions in the solver; `run` prints the SU2 `MARKER_PERIODIC` line and
 Eilmer's `Rmatrix` for a periodic pair and writes them, with the transform, to the
-`.grid.json` file next to the grid. In `.su2` and `.msh` output the revolved symmetry
+`.json` file next to the grid. In `.su2` and `.msh` output the revolved symmetry
 line becomes an edge on the axis, with prisms around it; `.msh` takes `order = 2`
 (27-node hexahedra, 18-node prisms) for high-order solvers. `[output] scale = 1000`
 writes the coordinates in millimetres.
@@ -78,10 +88,16 @@ grid-generator cone init --sweep
 grid-generator cone run
 ```
 
-Next to every body-fitted grid, `run` writes `<grid>.grid.json`: what not every grid
-format can carry, as plain JSON for scripts and post-processing. It holds the boundary
-names per side, the coordinate scale, the shock line `shock_line_j` of a shock-aligned
-grid, and the side-face transform and solver lines of a swept grid.
+Next to every body-fitted grid, `run` writes its record, `<grid>.json` (`cone_grid.dat`
+-> `cone_grid.json`), as plain JSON for scripts and post-processing:
+
+- what not every grid format can carry: the boundary names per side, the coordinate
+  scale, the shock line `shock_line_j` of a shock-aligned grid, and the side-face
+  transform and solver lines of a swept grid;
+- how the grid was made: the package versions, every setting as applied (defaults
+  included), the body and where it came from, and the shock curve itself. The grid can
+  be made again from the record alone. It has no timestamp, so the same inputs give the
+  same file and a diff of two records shows what changed.
 
 ## Features
 

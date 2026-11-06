@@ -6,15 +6,13 @@
 # run: grid-generator cone run
 
 # Sphere-cone, axisymmetric about the x axis; the grid is the meridian plane.
+# the body: geometry.toml next to this file (flow-theory reads the same file)
 [geometry]
-type = "cone"
-# nose radius in [m]
-nose_radius = 2.5e-3
-# cone half-angle in [deg]
-half_angle = 7.0
+# geometry file, relative to this file
+file = "geometry.toml"
 
 [domain]
-# end of the grid (and of the body) along x, measured from the nose tip in [m]
+# end of the grid along x, measured from the nose tip in [m]: where the body ends
 x_end = 1.0
 # constant wall-normal height of the grid in [m]; clears the bow shock at x_end
 height = 0.25

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from bodies import write_geometry
 from cfd_io import read_file
 from typer.testing import CliRunner
 
@@ -54,9 +55,10 @@ def write_sweep_config(
         assert old in config_text, old
         config_text = config_text.replace(old, new, 1)
 
-    # write
-    config_path = tmp_path / f"{geometry_type}.toml"
+    # write the grid config, and the starter body it points at
+    config_path = tmp_path / "grid.toml"
     config_path.write_text(config_text)
+    write_geometry(tmp_path, geometry_type)
 
     return config_path
 
@@ -67,8 +69,9 @@ def plane_of(tmp_path: Path, geometry_type: str):
     # template without the sweep
     plane_dir = tmp_path / "plane"
     plane_dir.mkdir()
-    config_path = plane_dir / f"{geometry_type}.toml"
+    config_path = plane_dir / "grid.toml"
     config_path.write_text(body_fitted_template(geometry_type))
+    write_geometry(plane_dir, geometry_type)
     grid = generate_body_fitted(config_path).grid
 
     return grid
@@ -160,15 +163,19 @@ def test_side_faces_match_and_cells_have_volume(tmp_path: Path, geometry_type: s
 def test_shock_aligned_grid_revolves(tmp_path: Path) -> None:
     """A shock-aligned cone grid revolves like any other: same plane, the shock line kept."""
 
-    # template with the shock line and the sweep; a straight shock curve next to it
+    # template with the shock line and the sweep, the starter body, and a bow shock for
+    # its 0.1 mm nose next to it (vertex 40 um ahead, 30 deg asymptote)
     config_text = body_fitted_template("cone", sweep=True, shock_aligned=True)
     config_text = config_text.replace(f"n_points = {N_SWEEP_TEMPLATE}\n", f"n_points = {N_SWEEP}\n")
-    config_path = tmp_path / "cone.toml"
+    config_path = tmp_path / "grid.toml"
     config_path.write_text(config_text)
+    write_geometry(tmp_path, "cone")
     config = load_body_fitted_config(config_path)
-    shock_x = np.linspace(-1.0e-3, 0.02, 400)
-    shock_y = 0.5e-3 + 2.0 * np.sqrt(1.0e-3 * (shock_x + 1.0e-3)) + 0.2 * (shock_x + 1.0e-3)
-    shock_y[0] = 0.0
+    delta, radius, beta = 40.0e-6, 0.15e-3, math.radians(30.0)
+    shock_y = np.linspace(0.0, 0.02, 2001)
+    shock_x = -delta + radius / math.tan(beta) ** 2 * (
+        np.sqrt(1.0 + (shock_y * math.tan(beta) / radius) ** 2) - 1.0
+    )
     with config.shock.curve.open("w") as stream:
         stream.write("x,y\n")
         for x_value, y_value in zip(shock_x, shock_y, strict=True):
@@ -213,11 +220,11 @@ def test_shock_aligned_grid_revolves(tmp_path: Path) -> None:
         ("cone", (("angle_deg = 10.0", "angle_deg = 360.0"),), "less than 360"),
         ("cone", (("angle_deg = 10.0", "angle_deg = 10.0\nwidth = 0.01"),), "width"),
         ("plate", (("n_points = 5", "n_points = 1"),), "n_points"),
-        ("cone", (('filename = "cone_local.su2"', 'filename = "cone_local.p2dfmt"'),), ".p3dfmt"),
+        ("cone", (('filename = "cone_grid.dat"', 'filename = "cone_local.p2dfmt"'),), ".p3dfmt"),
         (
             "cone",
             (
-                ('filename = "cone_local.su2"', 'filename = "cone_local.msh"'),
+                ('filename = "cone_grid.dat"', 'filename = "cone_local.msh"'),
                 ("order = 1", "order = 2"),
             ),
             r"\[sweep\] 5 points|odd",
@@ -292,9 +299,10 @@ def test_solver_lines_rotate_the_low_face_onto_the_high_one(tmp_path: Path) -> N
 def test_cli_init_sweep_writes_a_3d_config(tmp_path: Path, geometry_type: str) -> None:
     """init --sweep adds the body's [sweep]; the config runs into a 3D grid and its JSON."""
 
-    # init with --sweep, then run
-    config_path = tmp_path / f"{geometry_type}.toml"
+    # init with --sweep, then run (with the starter body next to the config)
+    config_path = tmp_path / "grid.toml"
     result_init = runner.invoke(app, [geometry_type, "init", "-o", str(config_path), "--sweep"])
+    write_geometry(tmp_path, geometry_type)
     result = runner.invoke(app, [geometry_type, "run", "-c", str(config_path)])
 
     # check
@@ -303,7 +311,7 @@ def test_cli_init_sweep_writes_a_3d_config(tmp_path: Path, geometry_type: str) -
     assert f"x {N_SWEEP_TEMPLATE} points" in result.output
     assert "MARKER_PERIODIC=" in result.output
     assert "--sweep" in config_path.read_text().splitlines()[0]
-    metadata = json.loads((tmp_path / f"{geometry_type}_local.grid.json").read_text())
+    metadata = json.loads((tmp_path / f"{geometry_type}_grid.json").read_text())
     assert metadata["sweep"]["n_planes"] == N_SWEEP_TEMPLATE
     assert metadata["nk"] == N_SWEEP_TEMPLATE
 
@@ -312,7 +320,9 @@ def test_cli_revolve_writes_su2_prisms_around_the_axis(tmp_path: Path) -> None:
     """A cone sector in SU2: prisms around the axis, no symmetry marker, Eilmer lines printed."""
 
     # run
-    config_path = write_sweep_config(tmp_path, "cone")
+    config_path = write_sweep_config(
+        tmp_path, "cone", (('filename = "cone_grid.dat"', 'filename = "cone_local.su2"'),)
+    )
     result = runner.invoke(app, ["cone", "run", "-c", str(config_path)])
     assert result.exit_code == 0, result.output
     assert "cells around the axis" in result.output
@@ -340,7 +350,7 @@ def test_cli_revolve_writes_gmsh(tmp_path: Path, order: int) -> None:
 
     # run
     replacements = (
-        ('filename = "cone_local.su2"', 'filename = "cone_local.msh"'),
+        ('filename = "cone_grid.dat"', 'filename = "cone_local.msh"'),
         ("order = 1", f"order = {order}"),
     )
     config_path = write_sweep_config(tmp_path, "cone", replacements)
@@ -381,7 +391,7 @@ def test_cli_structured_files_read_back(tmp_path: Path, suffix: str) -> None:
 
     # run
     output_name = f"cone_local{suffix}"
-    replacements = (('filename = "cone_local.su2"', f'filename = "{output_name}"'),)
+    replacements = (('filename = "cone_grid.dat"', f'filename = "{output_name}"'),)
     config_path = write_sweep_config(tmp_path, "cone", replacements)
     result = runner.invoke(app, ["cone", "run", "-c", str(config_path)])
     assert result.exit_code == 0, result.output
@@ -399,7 +409,7 @@ def test_cli_scale_multiplies_the_coordinates_in_the_file(tmp_path: Path) -> Non
 
     # run a plate slab at scale 1000 into HDF5
     replacements = (
-        ('filename = "plate_local.su2"', 'filename = "plate_local.h5"'),
+        ('filename = "plate_grid.dat"', 'filename = "plate_local.h5"'),
         ("scale = 1.0", "scale = 1000.0"),
     )
     config_path = write_sweep_config(tmp_path, "plate", replacements)
@@ -411,7 +421,7 @@ def test_cli_scale_multiplies_the_coordinates_in_the_file(tmp_path: Path) -> Non
     written = read_file(tmp_path / "plate_local.h5")
     np.testing.assert_allclose(written.grid.z, 1000.0 * expected.z, rtol=1e-15)
     np.testing.assert_allclose(written.grid.x, 1000.0 * expected.x, rtol=1e-15)
-    metadata = json.loads((tmp_path / "plate_local.grid.json").read_text())
+    metadata = json.loads((tmp_path / "plate_local.json").read_text())
     assert metadata["coordinate_scale"] == 1000.0
     sweep_data = metadata["sweep"]
     assert sweep_data["translation"] == [0.0, 0.0, 1000.0 * WIDTH]

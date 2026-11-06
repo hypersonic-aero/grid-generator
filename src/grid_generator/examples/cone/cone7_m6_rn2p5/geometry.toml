@@ -1,0 +1,28 @@
+# Body of the example cone7_m6_rn2p5: 7 deg sphere-cone, 2.5 mm nose radius, 0.5 m long
+# grid-generator (grid.toml) and flow-theory read it: geometry = "geometry.toml"
+# moldline of the body: geometry cone run
+
+# Sphere-cone, axisymmetric about the x axis; the moldline is its meridian.
+# The nose arc runs to 90 deg - half_angle, tangent to the cone.
+# Stagnation point at the origin, x along the axis, y radial.
+[geometry]
+# type marker
+type = "cone"
+# nose radius in [m]
+nose_radius = 2.5e-3
+# length of cone, measured axially from nose tip in [m]
+length = 0.5
+# cone half-angle in [deg]
+half_angle = 7.0
+
+# Points per piece of the moldline, each count including both ends of the piece.
+[points]
+# number of points on the nose arc (84 = 1 deg steps on the 83 deg arc)
+n_nose = 84
+# number of points on the cone surface
+n_body = 200
+
+# The path is relative to this file.
+[output]
+# moldline file: .csv, or .dat for Tecplot ASCII
+file = "cone.csv"

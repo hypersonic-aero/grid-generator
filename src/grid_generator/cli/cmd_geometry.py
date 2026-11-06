@@ -12,7 +12,6 @@ from typing import Annotated
 
 import typer
 
-from grid_generator import __version__
 from grid_generator.body_fitted import generate_body_fitted
 from grid_generator.cli.examples_command import build_examples_command, list_examples
 from grid_generator.cli.help_text import format_examples
@@ -24,6 +23,7 @@ from grid_generator.config import (
 )
 from grid_generator.config.body_fitted import AXISYMMETRIC_TYPES
 from grid_generator.config.templates import DEFAULT_BODY, DEFAULT_NORMAL
+from grid_generator.metadata import grid_record
 from grid_generator.quality import grid_quality, shock_line_quality, sweep_quality
 from grid_generator.sweep import sweep_transform
 
@@ -43,10 +43,12 @@ GEOMETRY_HELP: dict[str, str] = {
 # command group factory
 # --------------------------------------------------
 def build_geometry_app(geometry_type: str) -> typer.Typer:
-    """Build the `init` / `run` command group for one geometry type.
+    """Build the `init`, `run` and `examples` command group for one geometry type.
 
-    Every geometry gets the same two commands; only the template that `init` writes
-    and the type `run` accepts differ. The commands below close over geometry_type.
+    Every geometry gets `init` and `run`, and `examples` when it ships bundled cases.
+    What differs per geometry: the template `init` writes, the type `run` accepts, the
+    bundled examples, and the help text (the body's line, and whether --sweep revolves
+    or extrudes). The commands below close over geometry_type.
 
     Args:
         geometry_type: Key in GEOMETRY_HELP, e.g. "plate".
@@ -58,14 +60,18 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
     # examples shown under the group's help (--sweep revolves or extrudes, by body)
     planar = geometry_type not in AXISYMMETRIC_TYPES
     sweep_text = "extruded along z (3D)" if planar else "revolved into a sector (3D)"
+
+    # assemble the command used for the examples
     command = f"grid-generator {geometry_type}"
+
+    # assemble the examples list
     examples = [
         (f"{command} init", "defaults"),
         (f"{command} init --body segmented", "segmented body"),
         (f"{command} init --normal tanh", "tanh wall-normal"),
         (f"{command} init --shock-aligned", "shock-aligned grid (needs a shock curve)"),
         (f"{command} init --sweep", sweep_text),
-        (f"{command} run -c {geometry_type}.toml", "generate the grid"),
+        (f"{command} run", "generate the grid (reads grid.toml)"),
     ]
 
     # group help: what the body is, then the kinds of grid init can start
@@ -84,7 +90,8 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
         epilog=format_examples(examples),
         no_args_is_help=True,
     )
-    default_config = Path(f"{geometry_type}.toml")
+    # one name for every geometry type, by its role: the grid (the body is geometry.toml)
+    default_config = Path("grid.toml")
 
     # init summary: what it writes (the options are explained under init --help)
     init_help = "Write a starter configuration; the options pick the kind of grid and its spacing."
@@ -171,9 +178,23 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
         )
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(template, encoding="utf-8")
-        load_body_fitted_config(output, expected_type=geometry_type)
+
+        # validate: the body is in the template, or (shock-aligned) in geometry.toml, once
+        # there is one (it's written by geometry <type> init; the message below says so
+        # when it's missing)
+        geometry_missing = shock_aligned and not (output.parent / "geometry.toml").exists()
+        if not geometry_missing:
+            try:
+                load_body_fitted_config(output, expected_type=geometry_type)
+            except (OSError, ValueError, tomllib.TOMLDecodeError) as error:
+                typer.echo(f"error: {error}", err=True)
+                raise typer.Exit(code=1) from None
 
         typer.echo(f"Created: {output}")
+        if geometry_missing:
+            typer.echo(
+                f"The body comes from geometry.toml next to it: geometry {geometry_type} init"
+            )
         if shock_aligned:
             typer.echo("Put the shock curve next to it as shock_shape.csv (see [shock] curve).")
         typer.echo(f"Edit the file, then run: grid-generator {geometry_type} run -c {output}")
@@ -250,15 +271,14 @@ def build_geometry_app(geometry_type: str) -> typer.Typer:
             else:
                 output_path = write_file(output_file, written, dtype="f8")
 
-            # every grid: its description as JSON next to it, for formats that can't carry
-            # it (shock line j_s, side-face transform and solver lines, markers, scale)
-            metadata = {
-                "grid_file": Path(output_path).name,
-                "grid_generator_version": __version__,
-            }
-            metadata.update(written.attrs)
-            metadata["coordinate_scale"] = scale
-            metadata_path = output_file.with_suffix(".grid.json")
+            # every grid: its record as JSON next to it (see grid_generator.metadata): what
+            # formats can't carry (shock line j_s, side-face transform and solver lines,
+            # markers, scale), and how it was made (versions, settings, body, shock curve)
+            metadata = grid_record(
+                body_fitted_config, config, Path(output_path), written.attrs, scale
+            )
+            # (same name as the grid, .json: cone_grid.dat -> cone_grid.json)
+            metadata_path = output_file.with_suffix(".json")
             metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
         except (ImportError, OSError, TypeError, ValueError, tomllib.TOMLDecodeError) as error:
             typer.echo(f"error: {error}", err=True)
