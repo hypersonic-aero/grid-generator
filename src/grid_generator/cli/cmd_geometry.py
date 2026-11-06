@@ -32,10 +32,10 @@ from grid_generator.sweep import sweep_transform
 # --------------------------------------------------
 # keys must match BODY_FITTED_GEOMETRY_BLOCKS (and the [geometry] type values)
 GEOMETRY_HELP: dict[str, str] = {
-    "plate": "Body-fitted grid around a flat plate with a circular leading edge.",
-    "wedge": "Body-fitted grid around a planar blunted wedge.",
-    "cone": "Body-fitted grid of a sphere-cone (axisymmetric).",
-    "tangent-ogive": "Body-fitted grid of a spherically blunted tangent ogive (axisymmetric).",
+    "plate": "Body-fitted grid of a blunt flat plate (2D or extruded 3D).",
+    "wedge": "Body-fitted grid of a blunt wedge (2D or extruded 3D).",
+    "cone": "Body-fitted grid of a sphere-cone (axisymmetric or 3D sector).",
+    "tangent-ogive": "Body-fitted grid of a blunt tangent ogive (axisymmetric or 3D sector).",
 }
 
 
