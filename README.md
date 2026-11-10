@@ -94,7 +94,8 @@ Next to every body-fitted grid, `run` writes its record, `<grid>.json` (`cone_gr
 - what not every grid format can carry: the boundary names per side, the coordinate
   scale, the shock line `shock_line_j` of a shock-aligned grid, and the side-face
   transform and solver lines of a swept grid;
-- how the grid was made: the package versions, every setting as applied (defaults
+- how the grid was made: the package versions (for an editable install, the git state
+  of its source, e.g. `git v0.6.0-2-g7d86704-dirty`), every setting as applied (defaults
   included), the body and where it came from, and the shock curve itself. The grid can
   be made again from the record alone. It has no timestamp, so the same inputs give the
   same file and a diff of two records shows what changed.
