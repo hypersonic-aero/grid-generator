@@ -17,7 +17,7 @@ pip install grid-generator
 Clone the repository and install in editable mode:
 
 ```bash
-git clone https://github.com/uahypersonics/grid-generator.git
+git clone https://github.com/hypersonic-aero/grid-generator.git
 cd grid-generator
 pip install -e .
 ```

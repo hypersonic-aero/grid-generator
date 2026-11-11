@@ -42,5 +42,5 @@ jobs:
         with:
           files: coverage.xml
           token: ${{ secrets.CODECOV_TOKEN }}
-          slug: uahypersonics/grid-generator
+          slug: hypersonic-aero/grid-generator
           fail_ci_if_error: false

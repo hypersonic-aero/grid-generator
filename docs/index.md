@@ -23,5 +23,5 @@ grid-generator plate run
 ## License
 
 GNU General Public License v3.0 or later. See
-[LICENSE](https://github.com/uahypersonics/grid-generator/blob/main/LICENSE) for the
+[LICENSE](https://github.com/hypersonic-aero/grid-generator/blob/main/LICENSE) for the
 complete license terms.

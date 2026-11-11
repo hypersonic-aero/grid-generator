@@ -47,9 +47,9 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/uahypersonics/grid-generator"
-Repository = "https://github.com/uahypersonics/grid-generator"
-Documentation = "https://uahypersonics.github.io/grid-generator"
+Homepage = "https://github.com/hypersonic-aero/grid-generator"
+Repository = "https://github.com/hypersonic-aero/grid-generator"
+Documentation = "https://hypersonic-aero.github.io/grid-generator"
 
 [tool.setuptools.packages.find]
 where = ["src"]

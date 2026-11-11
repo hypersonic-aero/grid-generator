@@ -3,7 +3,7 @@
 Structured grid generation utilities for Python.
 
 [![PyPI](https://img.shields.io/pypi/v/grid-generator)](https://pypi.org/project/grid-generator/)
-[![Docs](https://img.shields.io/badge/docs-zensical-blue)](https://uahypersonics.github.io/grid-generator/)
+[![Docs](https://img.shields.io/badge/docs-zensical-blue)](https://hypersonic-aero.github.io/grid-generator/)
 [![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-%E2%89%A53.11-blue.svg)](https://www.python.org/downloads/)
 
@@ -39,7 +39,7 @@ print(dataset.grid.shape)
 
 Body-fitted 2D grids around blunt bodies (blunted plate, wedge, sphere-cone, tangent ogive)
 take the body in `[geometry]`, with the keys of
-[canonical-geometries](https://github.com/uahypersonics/canonical-geometries)
+[canonical-geometries](https://github.com/hypersonic-aero/canonical-geometries)
 (`type`, `nose_radius`, `length`, ...): right in the config for a grid on its own, or as
 a geometry file, `file = "geometry.toml"` (written by `geometry <type> init`), which
 flow-theory reads too:
@@ -117,7 +117,7 @@ Next to every body-fitted grid, `run` writes its record, `<grid>.json` (`cone_gr
 
 ## Documentation
 
-Documentation site: https://uahypersonics.github.io/grid-generator/
+Documentation site: https://hypersonic-aero.github.io/grid-generator/
 
 ## Releasing
 
